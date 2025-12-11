@@ -57,7 +57,8 @@ jobs:
         run: nuget restore "${{ steps.find.outputs.csproj_path }}"
 
       - name: Build
-        run: msbuild "${{ steps.find.outputs.csproj_path }}" /p:Configuration=${{ env.CONFIG }} /p:Platform="Any CPU" /t:Rebuild /v:m
+        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU
+
 
       # 5. Собираем готовый пакет для пользователей
       - name: Prepare release package
