@@ -45,19 +45,22 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-        # Поиск csproj автоматически 
       - name: Find .csproj automatically
         id: find
+        shell: pwsh
         run: |
           $proj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
-          echo "Found project: $($proj.FullName)"
-          echo "csproj_path=$($proj.FullName)" >> $env:GITHUB_OUTPUT
+          $normalized = $proj.FullName -replace "\\","/"
+          echo "Found project: $normalized"
+          echo "csproj_path=$normalized" >> $env:GITHUB_OUTPUT
+
 
       - name: NuGet restore
         run: nuget restore "${{ steps.find.outputs.csproj_path }}"
 
       - name: Build
-        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU
+        run: msbuild "${{ steps.find.outputs.csproj_path }}" /p:Configuration=Release /p:Platform=AnyCPU
+      
 
 
       # 5. Собираем готовый пакет для пользователей
