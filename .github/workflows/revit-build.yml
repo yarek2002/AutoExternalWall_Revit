@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      BUILD_PATH: Revit_AutoExternalWall/Revit_AutoExternalWall.sln
+      BUILD_PATH: Revit_AutoExternalWall/Revit_AutoExternalWall/Revit_AutoExternalWall.csproj 
       CONFIG: Release
       OUTPUT_DIR: Release-2021
 
@@ -44,20 +44,12 @@ jobs:
 # 2. Установка MSBuild
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-
-      # 3. Восстанавливаем NuGet-пакеты
-      - name: Restore NuGet packages
-        run: nuget restore ${{ env.SOLUTION }}
-
-      # 4. Собираем решение
-      - name: Build solution
-        run: |
-          msbuild ${{ env.SOLUTION }} `
-            /p:Configuration=${{ env.CONFIG }} `
-            /p:Platform="Any CPU" `
-            /p:TargetFrameworkVersion=v4.7.2 `
-            /t:Rebuild `
-            /v:minimal
+# 3.Восттановление NuGEt
+      - name: NuGet restore
+        run: nuget restore "${{ env.BUILD_PATH }}"
+# 4 Сборка
+      - name: Build
+        run: msbuild "${{ env.BUILD_PATH }}" /p:Configuration=${{ env.CONFIG }} /p:Platform="Any CPU" /t:Rebuild /v:m
 
       # 5. Собираем готовый пакет для пользователей
       - name: Prepare release package
