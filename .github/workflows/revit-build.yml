@@ -44,12 +44,20 @@ jobs:
 # 2. Установка MSBuild
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-# 3.Восттановление NuGEt
+
+        # Поиск csproj автоматически 
+      - name: Find .csproj automatically
+        id: find
+        run: |
+          $proj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
+          echo "Found project: $($proj.FullName)"
+          echo "csproj_path=$($proj.FullName)" >> $env:GITHUB_OUTPUT
+
       - name: NuGet restore
-        run: nuget restore "${{ env.BUILD_PATH }}"
-# 4 Сборка
+        run: nuget restore "${{ steps.find.outputs.csproj_path }}"
+
       - name: Build
-        run: msbuild "${{ env.BUILD_PATH }}" /p:Configuration=${{ env.CONFIG }} /p:Platform="Any CPU" /t:Rebuild /v:m
+        run: msbuild "${{ steps.find.outputs.csproj_path }}" /p:Configuration=${{ env.CONFIG }} /p:Platform="Any CPU" /t:Rebuild /v:m
 
       # 5. Собираем готовый пакет для пользователей
       - name: Prepare release package
