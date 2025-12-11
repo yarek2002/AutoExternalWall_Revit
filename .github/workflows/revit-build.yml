@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      SOLUTION_FILE: Revit_AutoExternalWall.sln
+      BUILD_PATH: Revit_AutoExternalWall/Revit_AutoExternalWall.slnn
       CONFIG: Release
       OUTPUT_DIR: Release-2021
 
