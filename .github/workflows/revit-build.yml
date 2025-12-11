@@ -2,84 +2,87 @@ name: Build Revit 2021 Plugin
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # чтобы можно было запустить вручную
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest   # обязательно Windows, потому что Revit API и MSBuild под .NET Framework
+    runs-on: windows-latest
 
     env:
       SOLUTION_FILE: Revit_AutoExternalWall.sln
-      PROJECT_FILE: Revit_AutoExternalWall/Revit_AutoExternalWall.csproj       # ← основной проект плагина (опционально)
-      CONFIGURATION: Release
-      REVIT_VERSION: 2021
+      CONFIG: Release
       OUTPUT_DIR: Release-2021
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      # 1. Скачиваем и кэшируем RevitAPI.dll + RevitAPIUI.dll из твоего релиза
+      - name: Cache Revit 2021 API DLLs
+        id: cache-revit-api
+        uses: actions/cache@v4
         with:
-          submodules: recursive   
+          path: libs/Revit2021
+          key: revit2021-api-v3-${{ hashFiles('.github/workflows/build.yml') }}  
 
-      # Установка Revit 2021 (через chocolatey)
-      - name: Install Revit 2021
-        run: |
-          choco install revit --version=2021.1.9.9 -y --no-progress --force
-        # 2021.1.9.9 — последняя версия Revit 2021 на момент 2025 года
+      - name: Download Revit 2021 API from GitHub Release
+        if: steps.cache-revit-api.outputs.cache-hit != 'true'
+        uses: dsaltares/fetch-gh-release-asset@master
+        with:
+          repo: ${{ github.AutoExternalWall_Revit }}          
+          version: tags/revit-api-2021             
+          file: Revit2021-API.zip                  
+          target: libs/Revit2021.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Добавляем пути к Revit в PATH и создаём переменные окружения
-      - name: Add Revit to PATH and set environment variables
-        run: |
-          echo "C:\Program Files\Autodesk\Revit 2021" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "RevitVersion=2021" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Extract Revit 2021 API DLLs
+        if: steps.cache-revit-api.outputs.cache-hit != 'true'
+        run: Expand-Archive -Path libs/Revit2021.zip -DestinationPath libs/Revit2021 -Force
 
-      # Восстановление NuGet-пакетов
+      # 2. Восстанавливаем NuGet-пакеты
       - name: Restore NuGet packages
-        run: nuget restore ${{ env.SOLUTION_FILE }}
+        run: nuget restore ${{ env.SOLUTION }}
 
-      # Сборка через MSBuild
+      # 3. Собираем решение
       - name: Build solution
         run: |
-          msbuild ${{ env.SOLUTION_FILE }} `
-            /p:Configuration=${{ env.CONFIGURATION }} `
+          msbuild ${{ env.SOLUTION }} `
+            /p:Configuration=${{ env.CONFIG }} `
             /p:Platform="Any CPU" `
             /p:TargetFrameworkVersion=v4.7.2 `
-            /p:RevitVersion=${{ env.REVIT_VERSION }} `
             /t:Rebuild `
-            /v:m `
-            /p:OutputPath=bin\${{ env.CONFIGURATION }}\
+            /v:minimal
 
-      # Копируем всё необходимое в папку для артефакта
+      # 4. Собираем готовый пакет для пользователей
       - name: Prepare release package
         run: |
-          mkdir ${{ env.OUTPUT_DIR }}
-          
-          # Копируем DLL и addin и всё, что лежит в bin/Release
-          Copy-Item -Path "Revit_AutoExternalWall/bin/${{ env.CONFIGURATION }}/*.*" -Destination "${{ env.OUTPUT_DIR }}/" -Recurse
-          
-          # Копируем .addin файл 
-          Copy-Item -Path "Revit_AutoExternalWall/*.addin" -Destination "${{ env.OUTPUT_DIR }}/" -ErrorAction SilentlyContinue
-          Copy-Item -Path "*.addin" -Destination "${{ env.OUTPUT_DIR }}/" -ErrorAction SilentlyContinue
-          
-          # Если у тебя есть Resources, Icons иконки и т.д.
-          Copy-Item -Path "Revit_AutoExternalWall/Resources" -Destination "${{ env.OUTPUT_DIR }}/Resources" -Recurse -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path ${{ env.OUTPUT_DIR }} -Force
 
-      # Создаём zip-архив
-      - name: Create ZIP artifact
-        run: Compress-Archive -Path "${{ env.OUTPUT_DIR }}/*" -DestinationPath "${{ env.OUTPUT_DIR }}.zip"
+          Copy-Item "Revit_AutoExternalWall/bin/${{ env.CONFIG }}/*" -Destination "${{ env.OUTPUT_DIR }}/" -Recurse
 
-      # Загружаем артефакт
-      - name: Upload build artifact
+          # Копируем .addin файл(ы) — ищем в корне и в папке проекта
+          Copy-Item "*.addin" -Destination "${{ env.OUTPUT_DIR }}/" -ErrorAction SilentlyContinue
+          Copy-Item "Revit_AutoExternalWall/*.addin" -Destination "${{ env.OUTPUT_DIR }}/" -ErrorAction SilentlyContinue
+
+          # Если есть папка Resources, Icons и т.п.
+          Copy-Item "Revit_AutoExternalWall/Resources" -Destination "${{ env.OUTPUT_DIR }}/Resources" -Recurse -ErrorAction SilentlyContinue
+
+      # 5. Создаём ZIP
+      - name: Create ZIP
+        run: Compress-Archive -Path "${{ env.OUTPUT_DIR }}/*" -DestinationPath "${{ env.OUTPUT_DIR }}.zip" -Force
+
+      # 6. Загружаем артефакт (всегда видно в Actions)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Revit2021-Plugin-${{ github.sha }}
+          name: Revit_AutoExternalWall-2021-${{ github.sha }}.zip
           path: ${{ env.OUTPUT_DIR }}.zip
 
-      # Опционально: автоматический релиз при теге (например v1.2.0)
-      - name: Create GitHub Release (on tag)
+      # 7. Создаём GitHub Release автоматически при пуше тега (например v1.3.0)
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
