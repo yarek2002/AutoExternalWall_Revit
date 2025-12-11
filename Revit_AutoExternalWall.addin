@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>AutoExternalWall</Name>
+    <FullClassName>Revit_AutoExternalWall.App</FullClassName>
+    <Text>Auto External Wall</Text>
+    <Description>Automatically place external walls around selected interior walls</Description>
+    <VisibilityMode>AlwaysVisible</VisibilityMode>
+    <Assembly>Revit_AutoExternalWall.dll</Assembly>
+    <AddInId>E1F91A65-8A59-4A0F-8C57-11A1F5B8D4F2</AddInId>
+    <Vendor>Custom Plugin</Vendor>
+    <VendorDescription>AutoExternalWall Plugin for Revit</VendorDescription>
+  </AddIn>
+</RevitAddIns>
