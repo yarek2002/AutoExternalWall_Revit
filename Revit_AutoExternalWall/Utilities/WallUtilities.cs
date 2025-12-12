@@ -84,8 +84,8 @@ namespace Revit_AutoExternalWall.Utilities
                     if (offsetCurve == null || offsetCurve.Length < 0.01)
                         continue;
 
-                    // Create wall
-                    Wall externalWall = Wall.Create(doc, offsetCurve, wallType.Id, level.Id, height);
+                    // Create wall (use overload with offset, flip and structural parameters)
+                    Wall externalWall = Wall.Create(doc, offsetCurve, wallType.Id, level.Id, height, 0.0, false, false);
 
                     if (externalWall != null)
                     {
