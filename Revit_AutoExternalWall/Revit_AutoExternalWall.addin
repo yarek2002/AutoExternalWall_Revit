@@ -6,9 +6,9 @@
     <Text>Auto External Wall</Text>
     <Description>Automatically place external walls around selected interior walls</Description>
     <VisibilityMode>AlwaysVisible</VisibilityMode>
-    <Assembly>Revit_AutoExternalWall.dll</Assembly>
+    <Assembly>test/Revit_AutoExternalWall.dll</Assembly>
     <AddInId>E1F91A65-8A59-4A0F-8C57-11A1F5B8D4F2</AddInId>
-    <Vendor>Custom Plugin</Vendor>
-    <VendorDescription>AutoExternalWall Plugin for Revit</VendorDescription>
+    <VendorId>YRRK2002</VendorId>
+    <VendorDescription>YRRK2002, None</VendorDescription>
   </AddIn>
 </RevitAddIns>
