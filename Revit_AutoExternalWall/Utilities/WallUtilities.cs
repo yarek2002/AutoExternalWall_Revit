@@ -100,6 +100,15 @@ namespace Revit_AutoExternalWall.Utilities
 
                     if (externalWall != null)
                     {
+                        // Check if external wall's normal face points in the same direction as intended
+                        XYZ externalWallNormal = GetWallFaceNormal(externalWall);
+                        
+                        // If the normal points opposite to intended direction, flip the wall
+                        if (XYZ.DotProduct(externalWallNormal, wallFaceNormal) < 0)
+                        {
+                            externalWall.Flipped = true;
+                        }
+
                         // Set wall location line to Interior Side
                         // This ensures the wall is pinned to the inner face and doesn't overlap
                         Parameter wallLocationLine = FindParameterByNameContains(externalWall, "location line");
