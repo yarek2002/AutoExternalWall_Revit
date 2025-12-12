@@ -74,38 +74,38 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Offset an arc segment
+        /// Offset an arc segment by sampling points and creating an arc through offset points
         /// </summary>
         private static Curve OffsetArc(Arc arc, double distance, XYZ direction)
         {
             try
             {
-                XYZ center = arc.Center;
-                double radius = arc.Radius;
-                XYZ normal = arc.Normal;
-
-                // Normalize direction
                 XYZ normalizedDir = direction.Normalize();
 
-                // Offset the center of the arc
-                XYZ offsetCenter = center + normalizedDir * distance;
+                // Sample three points on the arc: start, mid, end
+                XYZ start = arc.GetEndPoint(0);
+                XYZ end = arc.GetEndPoint(1);
+                double midParam = 0.5;
+                XYZ mid = arc.Evaluate(midParam, false);
 
-                // Create new arc with the same radius at the offset position
-                XYZ offsetStart = arc.GetEndPoint(0) + normalizedDir * distance;
-                XYZ offsetEnd = arc.GetEndPoint(1) + normalizedDir * distance;
+                // Offset sampled points by the given direction
+                XYZ offsetStart = start + normalizedDir * distance;
+                XYZ offsetMid = mid + normalizedDir * distance;
+                XYZ offsetEnd = end + normalizedDir * distance;
 
-                // Create arc through three points
+                // Create an arc through the three offset points
+                Arc offsetArc = null;
                 try
                 {
-                    Arc offsetArc = Arc.Create(offsetStart, offsetEnd, offsetCenter);
-                    return offsetArc;
+                    offsetArc = Arc.Create(offsetStart, offsetEnd, offsetMid);
                 }
                 catch
                 {
-                    // Fallback: create arc by center and radius
-                    Arc offsetArc = Arc.Create(offsetCenter, radius, arc.XDirection, arc.YDirection, 0, 2 * Math.PI);
-                    return offsetArc;
+                    // If creation fails, fallback to a simple offset line between start and end
+                    return Line.CreateBound(offsetStart, offsetEnd);
                 }
+
+                return offsetArc;
             }
             catch
             {

@@ -16,7 +16,7 @@ namespace Revit_AutoExternalWall
     [Regeneration(RegenerationOption.Manual)]
     public class ExternalWallCommand : IExternalCommand
     {
-        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+        public Autodesk.Revit.UI.Result Execute(ExternalCommandData commandData, ref string message, Autodesk.Revit.DB.ElementSet elements)
         {
             UIApplication uiApp = commandData.Application;
             UIDocument uiDoc = uiApp.ActiveUIDocument;
@@ -100,13 +100,13 @@ namespace Revit_AutoExternalWall
                     TaskDialog.Show("Success", $"Created {wallsCreated} external wall(s).");
                 }
 
-                return Result.Succeeded;
+                return Autodesk.Revit.UI.Result.Succeeded;
             }
             catch (Exception ex)
             {
                 message = $"Error: {ex.Message}\nStack Trace: {ex.StackTrace}";
                 TaskDialog.Show("Error", message);
-                return Result.Failed;
+                return Autodesk.Revit.UI.Result.Failed;
             }
         }
     }
