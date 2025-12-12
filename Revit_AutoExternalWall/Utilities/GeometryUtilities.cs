@@ -103,7 +103,7 @@ namespace Revit_AutoExternalWall.Utilities
                 catch
                 {
                     // Fallback: create arc by center and radius
-                    Arc offsetArc = Arc.Create(offsetCenter, radius, 0, 2 * Math.PI, arc.XAxis, arc.YAxis);
+                    Arc offsetArc = Arc.Create(offsetCenter, radius, arc.XDirection, arc.YDirection, 0, 2 * Math.PI);
                     return offsetArc;
                 }
             }
