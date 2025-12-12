@@ -76,7 +76,7 @@ jobs:
 
       - name: Build
         working-directory: Revit_AutoExternalWall
-        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU
+        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU /p:ReferencePath=..\libs\Revit2021
       
 
 
