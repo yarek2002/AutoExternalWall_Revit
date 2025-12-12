@@ -102,7 +102,7 @@ namespace Revit_AutoExternalWall.Utilities
                     {
                         // Set wall location line to Interior Side
                         // This ensures the wall is pinned to the inner face and doesn't overlap
-                        Parameter wallLocationLine = externalWall.get_Parameter(BuiltInParameter.WALL_LOCATION_LINE_PARAM);
+                        Parameter wallLocationLine = FindParameterByNameContains(externalWall, "location line");
                         if (wallLocationLine != null && wallLocationLine.IsReadOnly == false)
                         {
                             wallLocationLine.Set(1); // 1 = Interior Side
