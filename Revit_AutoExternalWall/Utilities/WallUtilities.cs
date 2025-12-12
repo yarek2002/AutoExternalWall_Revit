@@ -95,20 +95,14 @@ namespace Revit_AutoExternalWall.Utilities
                     if (offsetCurve == null || offsetCurve.Length < 0.01)
                         continue;
 
-                    // Create wall (use overload with offset, flip and structural parameters)
-                    Wall externalWall = Wall.Create(doc, offsetCurve, wallType.Id, level.Id, height, 0.0, false, false);
+                    // Invert curve direction so inner face is on the side toward original wall
+                    Curve reversedCurve = offsetCurve.CreateReversed();
+
+                    // Create wall with reversed curve
+                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, false);
 
                     if (externalWall != null)
                     {
-                        // Check if external wall's normal face points in the same direction as intended
-                        XYZ externalWallNormal = GetWallFaceNormal(externalWall);
-                        
-                        // If the normal points opposite to intended direction, flip the wall
-                        if (XYZ.DotProduct(externalWallNormal, wallFaceNormal) < 0)
-                        {
-                            externalWall.Flipped = true;
-                        }
-
                         // Set wall location line to Interior Side
                         // This ensures the wall is pinned to the inner face and doesn't overlap
                         Parameter wallLocationLine = FindParameterByNameContains(externalWall, "location line");
