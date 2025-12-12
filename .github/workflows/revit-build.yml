@@ -58,6 +58,10 @@ jobs:
       - name: NuGet restore
         run: nuget restore "${{ steps.find.outputs.csproj_path }}"
 
+      - name: Show directory structure
+        run: tree . /f
+
+
       - name: Build
         run: msbuild "${{ steps.find.outputs.csproj_path }}" /p:Configuration=Release /p:Platform=AnyCPU
       
