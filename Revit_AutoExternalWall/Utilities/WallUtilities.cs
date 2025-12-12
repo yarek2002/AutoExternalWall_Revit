@@ -100,6 +100,14 @@ namespace Revit_AutoExternalWall.Utilities
 
                     if (externalWall != null)
                     {
+                        // Set wall location line to Interior Side
+                        // This ensures the wall is pinned to the inner face and doesn't overlap
+                        Parameter wallLocationLine = externalWall.get_Parameter(BuiltInParameter.WALL_LOCATION_LINE_PARAM);
+                        if (wallLocationLine != null && wallLocationLine.IsReadOnly == false)
+                        {
+                            wallLocationLine.Set(1); // 1 = Interior Side
+                        }
+
                         // Copy properties from inner wall to external wall
                         CopyWallProperties(innerWall, externalWall);
                         wallsCreated++;
@@ -252,9 +260,8 @@ namespace Revit_AutoExternalWall.Utilities
             }
         }
 
-         /// <summary>
+        /// <summary>
         /// Get the normal vector of the outer wall face
-        /// Takes into account wall orientation (Flipped property)
         /// </summary>
         private static XYZ GetWallFaceNormal(Wall wall)
         {
@@ -272,14 +279,9 @@ namespace Revit_AutoExternalWall.Utilities
                 XYZ startPoint = curve.GetEndPoint(0);
                 XYZ tangent = (curve.GetEndPoint(1) - startPoint).Normalize();
 
-                // Calculate perpendicular vector in XY plane (rotate 90 degrees)
+                // Calculate perpendicular vector in XY plane (rotate 90 degrees counterclockwise)
+                // This points outward from the wall
                 XYZ normal = new XYZ(-tangent.Y, tangent.X, 0);
-
-                // If wall is flipped, reverse the normal direction
-                if (wall.Flipped)
-                {
-                    normal = new XYZ(tangent.Y, -tangent.X, 0);
-                }
 
                 // Normalize and return
                 if (normal.GetLength() > 0)
