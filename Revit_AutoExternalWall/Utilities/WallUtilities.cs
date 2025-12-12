@@ -251,15 +251,48 @@ namespace Revit_AutoExternalWall.Utilities
         {
             try
             {
-                // Copy construction type
-                Parameter constructTypeSource = source.get_Parameter(BuiltInParameter.WALL_CONSTRUCTION_TYPE);
-                Parameter constructTypeTarget = target.get_Parameter(BuiltInParameter.WALL_CONSTRUCTION_TYPE);
+                // Try to copy a parameter related to "construction" by name (some Revit versions lack a BuiltInParameter)
+                Parameter constructTypeSource = FindParameterByNameContains(source, "construction");
+                Parameter constructTypeTarget = FindParameterByNameContains(target, "construction");
+
                 if (constructTypeSource != null && constructTypeTarget != null && constructTypeSource.HasValue)
                 {
-                    constructTypeTarget.Set(constructTypeSource.AsInteger());
+                    switch (constructTypeSource.StorageType)
+                    {
+                        case StorageType.Integer:
+                            constructTypeTarget.Set(constructTypeSource.AsInteger());
+                            break;
+                        case StorageType.Double:
+                            constructTypeTarget.Set(constructTypeSource.AsDouble());
+                            break;
+                        case StorageType.String:
+                            constructTypeTarget.Set(constructTypeSource.AsString());
+                            break;
+                        case StorageType.ElementId:
+                            constructTypeTarget.Set(constructTypeSource.AsElementId());
+                            break;
+                    }
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Find a parameter on an element whose name contains the provided substring (case-insensitive)
+        /// </summary>
+        private static Parameter FindParameterByNameContains(Element el, string namePart)
+        {
+            if (el == null || string.IsNullOrEmpty(namePart))
+                return null;
+
+            string lower = namePart.ToLowerInvariant();
+            foreach (Parameter p in el.Parameters)
+            {
+                if (p.Definition != null && p.Definition.Name != null && p.Definition.Name.ToLowerInvariant().Contains(lower))
+                    return p;
+            }
+
+            return null;
         }
     }
 }
