@@ -176,20 +176,52 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
-                // Alternative: try to get from compound structure
-                CompoundStructure compStructure = wallType?.GetCompoundStructure();
-                if (compStructure != null && !compStructure.IsVerticallyCompound)
+                // Alternative: try to get from compound structure via reflection (works across API variations)
+                try
                 {
-                    double totalThickness = 0;
-                    int layerCount = compStructure.LayerCount;
-                    for (int i = 0; i < layerCount; i++)
+                    object compStructure = wallType?.GetCompoundStructure();
+                    if (compStructure != null)
                     {
-                        CompoundStructureLayer layer = compStructure.GetLayerProperties(i);
-                        totalThickness += layer.Thickness;
+                        var csType = compStructure.GetType();
+
+                        // Try to get a collection of layers from property 'Layers' or method 'GetLayers'
+                        object layersObj = null;
+                        var prop = csType.GetProperty("Layers");
+                        if (prop != null)
+                            layersObj = prop.GetValue(compStructure);
+                        else
+                        {
+                            var m = csType.GetMethod("GetLayers");
+                            if (m != null)
+                                layersObj = m.Invoke(compStructure, null);
+                        }
+
+                        if (layersObj is System.Collections.IEnumerable layersEnum)
+                        {
+                            double totalThickness = 0;
+                            foreach (var layerObj in layersEnum)
+                            {
+                                if (layerObj == null) continue;
+                                var layerType = layerObj.GetType();
+
+                                // Try common thickness/width property names
+                                object thicknessVal = layerType.GetProperty("Thickness")?.GetValue(layerObj)
+                                    ?? layerType.GetProperty("Width")?.GetValue(layerObj);
+
+                                if (thicknessVal is double td)
+                                    totalThickness += td;
+                                else if (thicknessVal is float tf)
+                                    totalThickness += tf;
+                                else if (thicknessVal is int ti)
+                                    totalThickness += ti;
+                            }
+
+                            if (totalThickness > 0)
+                                return totalThickness;
+                        }
                     }
-                    if (totalThickness > 0)
-                        return totalThickness;
                 }
+                catch { }
 
                 // Fallback: estimate from bounding box
                 BoundingBoxXYZ bbox = wall.get_BoundingBox(null);
