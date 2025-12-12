@@ -41,6 +41,15 @@ jobs:
       - name: Extract Revit 2021 API DLLs
         if: steps.cache-revit-api.outputs.cache-hit != 'true'
         run: Expand-Archive -Path libs/Revit2021.zip -DestinationPath libs/Revit2021 -Force
+
+      - name: Check DLL versions
+        run: |
+          Write-Host "RevitAPI version:"
+          (Get-Item "libs/Revit2021/RevitAPI.dll").VersionInfo.FileVersion
+          Write-Host "RevitAPIUI version:"
+          (Get-Item "libs/Revit2021/RevitAPIUI.dll").VersionInfo.FileVersion
+
+        
 # 2. Установка MSBuild
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
