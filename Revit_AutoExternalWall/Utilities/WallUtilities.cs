@@ -10,19 +10,23 @@ namespace Revit_AutoExternalWall.Utilities
     /// </summary>
     public static class WallUtilities
     {
-        /// <summary>
-        /// Get a suitable external wall type from the document
+                /// <summary>
+        /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall)
         /// </summary>
         public static WallType GetExternalWallType(Document doc)
         {
             try
             {
-                // Try to find a wall type with "exterior" or "external" in the name
+                // Try to find a wall type with "exterior" or "external" in the name, excluding Curtain Walls
                 FilteredElementCollector collector = new FilteredElementCollector(doc)
                     .OfClass(typeof(WallType));
 
                 foreach (WallType wallType in collector.Cast<WallType>())
                 {
+                    // Skip Curtain Walls
+                    if (wallType.Kind == WallKind.Curtain)
+                        continue;
+
                     string name = wallType.Name.ToLower();
                     if (name.Contains("exterior") || name.Contains("external"))
                     {
@@ -30,9 +34,16 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
-                // If not found, get the first available wall type
-                WallType defaultWallType = collector.FirstOrDefault() as WallType;
-                return defaultWallType;
+                // If not found, get the first available Basic Wall type (not Curtain)
+                foreach (WallType wallType in collector.Cast<WallType>())
+                {
+                    if (wallType.Kind != WallKind.Curtain)
+                    {
+                        return wallType;
+                    }
+                }
+
+                return null;
             }
             catch
             {
