@@ -75,7 +75,8 @@ jobs:
               Get-ChildItem -Recurse -Filter RevitAPI.dll | Select-Object FullName
 
       - name: Build
-        run: msbuild "${{ steps.find.outputs.csproj_path }}" /p:Configuration=Release /p:Platform=AnyCPU
+        working-directory: Revit_AutoExternalWall
+        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU
       
 
 
