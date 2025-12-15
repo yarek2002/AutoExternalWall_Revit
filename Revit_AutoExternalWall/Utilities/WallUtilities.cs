@@ -489,8 +489,8 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
-                // For each wall, merge its collected curves into longer continuous curves
-                // and create external walls from the merged results.
+                // For each wall, merge its collected curves and expand across partition gaps
+                // so walls are continuous and split points lie in partition centers.
                 foreach (var kvp in segmentsByWall)
                 {
                     ElementId wallId = kvp.Key;
@@ -499,10 +499,15 @@ namespace Revit_AutoExternalWall.Utilities
                         continue;
 
                     List<Curve> merged = MergeCurvesAlongWall(innerWall, kvp.Value);
-                    foreach (var innerCurve in merged)
+                    if (merged.Count == 0) continue;
+
+                    // Expand each segment by half of the gap to its neighbor
+                    List<Curve> expanded = ExpandCurvesAcrossPartitions(innerWall, merged);
+                    
+                    foreach (var expandedCurve in expanded)
                     {
-                        if (innerCurve == null) continue;
-                        created += CreateExternalWallAlongCurve(doc, innerWall, innerCurve, wallType);
+                        if (expandedCurve == null) continue;
+                        created += CreateExternalWallAlongCurve(doc, innerWall, expandedCurve, wallType);
                     }
                 }
             }
@@ -559,11 +564,79 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Merge a set of curves that lie along a straight wall into longer continuous
-        /// line segments. Returns the merged curves; if the wall is not straight or
-        /// merging fails, returns the original curves.
+        /// Expand a set of merged curves by half of each neighboring partition gap
+        /// so that split points end up in the middle of partitions between rooms.
         /// </summary>
-        private static List<Curve> MergeCurvesAlongWall(Wall wall, List<Curve> curves)
+        private static List<Curve> ExpandCurvesAcrossPartitions(Wall wall, List<Curve> mergedCurves)
+        {
+            var result = new List<Curve>();
+            if (wall == null || mergedCurves == null || mergedCurves.Count == 0)
+                return result;
+
+            try
+            {
+                LocationCurve loc = wall.Location as LocationCurve;
+                if (loc == null || loc.Curve == null)
+                    return new List<Curve>(mergedCurves);
+
+                if (!(loc.Curve is Line wallLine))
+                    return new List<Curve>(mergedCurves);
+
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ dir = (wallLine.GetEndPoint(1) - wallStart).Normalize();
+
+                // Convert curves to intervals on wall coordinate
+                var intervals = new List<Tuple<double, double>>();
+                foreach (var c in mergedCurves)
+                {
+                    if (c == null) continue;
+                    XYZ p0 = c.GetEndPoint(0);
+                    XYZ p1 = c.GetEndPoint(1);
+                    double t0 = (p0 - wallStart).DotProduct(dir);
+                    double t1 = (p1 - wallStart).DotProduct(dir);
+                    double a = Math.Min(t0, t1);
+                    double b = Math.Max(t0, t1);
+                    intervals.Add(Tuple.Create(a, b));
+                }
+
+                intervals.Sort((x, y) => x.Item1.CompareTo(y.Item1));
+
+                // Expand each interval by half of neighboring gaps
+                for (int i = 0; i < intervals.Count; ++i)
+                {
+                    double expandStart = intervals[i].Item1;
+                    double expandEnd = intervals[i].Item2;
+
+                    // Expand toward previous interval
+                    if (i > 0)
+                    {
+                        double prevEnd = intervals[i - 1].Item2;
+                        double gap = expandStart - prevEnd;
+                        if (gap > 0)
+                            expandStart -= gap / 2.0;
+                    }
+
+                    // Expand toward next interval
+                    if (i < intervals.Count - 1)
+                    {
+                        double nextStart = intervals[i + 1].Item1;
+                        double gap = nextStart - expandEnd;
+                        if (gap > 0)
+                            expandEnd += gap / 2.0;
+                    }
+
+                    XYZ aPt = wallStart + (dir * expandStart);
+                    XYZ bPt = wallStart + (dir * expandEnd);
+                    result.Add(Line.CreateBound(aPt, bPt));
+                }
+
+                return result;
+            }
+            catch
+            {
+                return new List<Curve>(mergedCurves);
+            }
+        }
         {
             var result = new List<Curve>();
             if (wall == null || curves == null || curves.Count == 0)
