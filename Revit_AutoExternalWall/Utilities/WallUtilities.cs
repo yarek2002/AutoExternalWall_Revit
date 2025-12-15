@@ -78,11 +78,12 @@ namespace Revit_AutoExternalWall.Utilities
                 if (level == null)
                     return 0;
 
-                // Get wall thickness and calculate total offset distance
-                // Offset = wall thickness / 2 + gap (0 mm) + 0.5 * wall thickness (for external wall)
-                double wallThickness = GetWallThickness(innerWall);
-                double gapDistance = wallThickness * 0.5; // 0 mm gap + 0.5 * external wall thickness
-                double totalOffsetDistance = gapDistance;
+                // Get wall thicknesses and calculate total offset distance
+                // Offset (center-to-center) = (thickness_existing / 2) + gap + (thickness_new / 2)
+                double existingThickness = GetWallThickness(innerWall);
+                double newWallThickness = GetWallTypeThickness(wallType);
+                double gapDistance = 0.0; // gap in feet (0 = flush)
+                double totalOffsetDistance = (existingThickness / 2.0) + gapDistance + (newWallThickness / 2.0);
 
                 // Get wall face orientation to determine offset direction
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
@@ -260,6 +261,71 @@ namespace Revit_AutoExternalWall.Utilities
             catch
             {
                 return ConvertMMToFeet(250); // Default 250mm thickness
+            }
+        }
+
+        /// <summary>
+        /// Get wall type thickness (from WallType)
+        /// </summary>
+        private static double GetWallTypeThickness(WallType wallType)
+        {
+            try
+            {
+                if (wallType == null)
+                    return ConvertMMToFeet(250);
+
+                Parameter thicknessParam = wallType.get_Parameter(BuiltInParameter.WALL_ATTR_WIDTH_PARAM);
+                if (thicknessParam != null && thicknessParam.HasValue)
+                    return thicknessParam.AsDouble();
+
+                // Try compound structure via reflection (similar to GetWallThickness)
+                try
+                {
+                    object compStructure = wallType?.GetCompoundStructure();
+                    if (compStructure != null)
+                    {
+                        var csType = compStructure.GetType();
+                        object layersObj = null;
+                        var prop = csType.GetProperty("Layers");
+                        if (prop != null)
+                            layersObj = prop.GetValue(compStructure);
+                        else
+                        {
+                            var m = csType.GetMethod("GetLayers");
+                            if (m != null)
+                                layersObj = m.Invoke(compStructure, null);
+                        }
+
+                        if (layersObj is System.Collections.IEnumerable layersEnum)
+                        {
+                            double totalThickness = 0;
+                            foreach (var layerObj in layersEnum)
+                            {
+                                if (layerObj == null) continue;
+                                var layerType = layerObj.GetType();
+                                object thicknessVal = layerType.GetProperty("Thickness")?.GetValue(layerObj)
+                                    ?? layerType.GetProperty("Width")?.GetValue(layerObj);
+
+                                if (thicknessVal is double td)
+                                    totalThickness += td;
+                                else if (thicknessVal is float tf)
+                                    totalThickness += tf;
+                                else if (thicknessVal is int ti)
+                                    totalThickness += ti;
+                            }
+
+                            if (totalThickness > 0)
+                                return totalThickness;
+                        }
+                    }
+                }
+                catch { }
+
+                return ConvertMMToFeet(250);
+            }
+            catch
+            {
+                return ConvertMMToFeet(250);
             }
         }
 
