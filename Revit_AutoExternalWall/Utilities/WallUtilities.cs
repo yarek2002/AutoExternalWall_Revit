@@ -108,7 +108,7 @@ namespace Revit_AutoExternalWall.Utilities
                         Parameter wallLocationLine = externalWall.get_Parameter(BuiltInParameter.WALL_KEY_REF_PARAM);
                         if (wallLocationLine != null && !wallLocationLine.IsReadOnly)
                         {
-                            wallLocationLine.Set(1); // 1 = Interior Side
+                            wallLocationLine.Set(2); // 2 = Exterior Side
                         }
 
                         // Copy properties from inner wall to external wall
