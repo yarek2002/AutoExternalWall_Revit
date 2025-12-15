@@ -814,51 +814,7 @@ namespace Revit_AutoExternalWall.Utilities
             catch { return result; }
         }
 
-        /// <summary>
-        /// Split a wall at specified points (parameter along curve).
-        /// Returns the number of wall segments after splitting.
-        /// </summary>
-        private static int SplitWallAtPoints(Wall wall, List<double> splitParams)
-        {
-            if (wall == null || splitParams == null || splitParams.Count == 0)
-                return 1;
 
-            try
-            {
-                // Get wall curve
-                LocationCurve loc = wall.Location as LocationCurve;
-                if (loc == null || loc.Curve == null)
-                    return 1;
-
-                Curve wallCurve = loc.Curve;
-                XYZ start = wallCurve.GetEndPoint(0);
-                XYZ end = wallCurve.GetEndPoint(1);
-                XYZ dir = (end - start).Normalize();
-
-                // Sort split params
-                splitParams.Sort();
-
-                // Split in server's transaction context - assume caller handles transactions
-                foreach (double param in splitParams)
-                {
-                    XYZ splitPoint = start + dir * param;
-                    try
-                    {
-                        // Wall splitting in Revit API - use Wall.SplitWall
-                        if (wall.SplitWall(splitPoint))
-                        {
-                            // After splitting, the wall is split into two parts,
-                            // but we need the new wall IDs if we want to track them
-                        }
-                    }
-                    catch { }
-                }
-
-                // Return estimated segments (original + splits)
-                return 1 + splitParams.Count;
-            }
-            catch { return 1; }
-        }
 
         /// <summary>
         /// Get wall curve segments based on split points along the encompassing curve.
