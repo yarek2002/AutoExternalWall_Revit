@@ -460,6 +460,12 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
+                // Group boundary segments by their source wall so we can merge contiguous segments
+                // that reference the same existing wall. This avoids small gaps when multiple
+                // rooms share the same wall and each room provides its own (possibly short)
+                // boundary segment.
+                Dictionary<ElementId, List<Curve>> segmentsByWall = new Dictionary<ElementId, List<Curve>>();
+
                 foreach (var loop in loops)
                 {
                     if (loop == null) continue;
@@ -467,7 +473,6 @@ namespace Revit_AutoExternalWall.Utilities
                     {
                         if (seg == null) continue;
 
-                        // BoundarySegment has ElementId referring to the boundary element (wall)
                         ElementId boundaryId = seg.ElementId;
 
                         // Only process if this segment belongs to a selected wall (or if no walls were selected)
@@ -475,13 +480,36 @@ namespace Revit_AutoExternalWall.Utilities
                             continue;
 
                         Element boundaryElem = doc.GetElement(boundaryId);
-                        if (boundaryElem is Wall innerWall)
+                        if (boundaryElem is Wall)
                         {
                             Curve innerCurve = seg.GetCurve();
                             if (innerCurve == null) continue;
 
-                            created += CreateExternalWallAlongCurve(doc, innerWall, innerCurve, wallType);
+                            if (!segmentsByWall.TryGetValue(boundaryId, out var list))
+                            {
+                                list = new List<Curve>();
+                                segmentsByWall[boundaryId] = list;
+                            }
+
+                            list.Add(innerCurve);
                         }
+                    }
+                }
+
+                // For each wall, merge its collected curves into longer continuous curves
+                // and create external walls from the merged results.
+                foreach (var kvp in segmentsByWall)
+                {
+                    ElementId wallId = kvp.Key;
+                    Element boundaryElem = doc.GetElement(wallId);
+                    if (!(boundaryElem is Wall innerWall))
+                        continue;
+
+                    List<Curve> merged = MergeCurvesAlongWall(innerWall, kvp.Value);
+                    foreach (var innerCurve in merged)
+                    {
+                        if (innerCurve == null) continue;
+                        created += CreateExternalWallAlongCurve(doc, innerWall, innerCurve, wallType);
                     }
                 }
             }
@@ -540,6 +568,85 @@ namespace Revit_AutoExternalWall.Utilities
                 return created;
             }
             catch { return 0; }
+        }
+
+        /// <summary>
+        /// Merge a set of curves that lie along a straight wall into longer continuous
+        /// line segments. Returns the merged curves; if the wall is not straight or
+        /// merging fails, returns the original curves.
+        /// </summary>
+        private static List<Curve> MergeCurvesAlongWall(Wall wall, List<Curve> curves)
+        {
+            var result = new List<Curve>();
+            if (wall == null || curves == null || curves.Count == 0)
+                return result;
+
+            try
+            {
+                LocationCurve loc = wall.Location as LocationCurve;
+                if (loc == null || loc.Curve == null)
+                    return new List<Curve>(curves);
+
+                // Only attempt merging for straight walls (Line location)
+                if (!(loc.Curve is Line wallLine))
+                    return new List<Curve>(curves);
+
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ dir = (wallEnd - wallStart).Normalize();
+
+                // Convert each curve to an interval along the wall direction
+                var intervals = new List<Tuple<double, double>>();
+                foreach (var c in curves)
+                {
+                    if (c == null) continue;
+                    XYZ p0 = c.GetEndPoint(0);
+                    XYZ p1 = c.GetEndPoint(1);
+                    double t0 = (p0 - wallStart).DotProduct(dir);
+                    double t1 = (p1 - wallStart).DotProduct(dir);
+                    double a = Math.Min(t0, t1);
+                    double b = Math.Max(t0, t1);
+                    intervals.Add(Tuple.Create(a, b));
+                }
+
+                if (intervals.Count == 0)
+                    return result;
+
+                intervals.Sort((x, y) => x.Item1.CompareTo(y.Item1));
+                double tol = 1e-6;
+
+                double curA = intervals[0].Item1;
+                double curB = intervals[0].Item2;
+
+                for (int i = 1; i < intervals.Count; ++i)
+                {
+                    var it = intervals[i];
+                    if (it.Item1 <= curB + tol)
+                    {
+                        // overlapping or adjacent - extend
+                        curB = Math.Max(curB, it.Item2);
+                    }
+                    else
+                    {
+                        XYZ aPt = wallStart + (dir * curA);
+                        XYZ bPt = wallStart + (dir * curB);
+                        result.Add(Line.CreateBound(aPt, bPt));
+                        curA = it.Item1;
+                        curB = it.Item2;
+                    }
+                }
+
+                // add final interval
+                XYZ lastA = wallStart + (dir * curA);
+                XYZ lastB = wallStart + (dir * curB);
+                result.Add(Line.CreateBound(lastA, lastB));
+
+                return result;
+            }
+            catch
+            {
+                return new List<Curve>(curves);
+            }
         }
     }
 }
