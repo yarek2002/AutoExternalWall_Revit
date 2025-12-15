@@ -518,24 +518,20 @@ namespace Revit_AutoExternalWall.Utilities
                     if (segmentDatas.Count == 0)
                         continue;
 
-                    // Get the encompassing curve covering all room boundaries
-                    Curve encompassingCurve = GetEncompassingCurve(innerWall, segmentDatas.Select(s => s.Curve).ToList());
-                    if (encompassingCurve == null)
-                        continue;
-
-                    // Create the external wall
-                    Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, encompassingCurve, wallType);
-                    if (externalWall == null)
-                        continue;
-
-                    created++; // Count the original wall
-
                     // Find split points: midpoints between rooms
-                    List<double> splitPoints = CalculateSplitPoints(innerWall, segmentDatas);
-                    if (splitPoints.Count > 0)
+                    List<double> splitParams = CalculateSplitPoints(innerWall, segmentDatas);
+
+                    // Get curve segments based on split points
+                    List<Curve> wallSegments = GetWallSegments(innerWall, segmentDatas, splitParams);
+
+                    // Create external walls for each segment
+                    foreach (Curve segment in wallSegments)
                     {
-                        // Split the wall at these points, updating created count
-                        created += SplitWallAtPoints(externalWall, splitPoints) - 1; // Subtract 1 since we already counted the original
+                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType);
+                        if (externalWall != null)
+                        {
+                            created++;
+                        }
                     }
                 }
             }
@@ -862,6 +858,72 @@ namespace Revit_AutoExternalWall.Utilities
                 return 1 + splitParams.Count;
             }
             catch { return 1; }
+        }
+
+        /// <summary>
+        /// Get wall curve segments based on split points along the encompassing curve.
+        /// </summary>
+        private static List<Curve> GetWallSegments(Wall wall, List<CurveSegmentData> segmentDatas, List<double> splitParams)
+        {
+            var result = new List<Curve>();
+
+            if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
+                return result;
+
+            try
+            {
+                LocationCurve loc = wall.Location as LocationCurve;
+                if (loc == null || loc.Curve == null || !(loc.Curve is Line wallLine))
+                    return result;
+
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ dir = (wallEnd - wallStart).Normalize();
+                double wallLength = wallStart.DistanceTo(wallEnd);
+
+                // Find the encompassing min and max from segmentDatas
+                double minT = double.MaxValue;
+                double maxT = double.MinValue;
+
+                foreach (var segmentData in segmentDatas)
+                {
+                    if (segmentData.Curve == null) continue;
+
+                    XYZ p0 = segmentData.Curve.GetEndPoint(0);
+                    XYZ p1 = segmentData.Curve.GetEndPoint(1);
+                    double t0 = (p0 - wallStart).DotProduct(dir);
+                    double t1 = (p1 - wallStart).DotProduct(dir);
+                    minT = Math.Min(minT, Math.Min(t0, t1));
+                    maxT = Math.Max(maxT, Math.Max(t0, t1));
+                }
+
+                if (minT >= maxT)
+                    return result;
+
+                // Build split points: include min, splits, max
+                var splitPoints = new List<double> { minT };
+                splitPoints.AddRange(splitParams.Where(p => p > minT && p < maxT));
+                splitPoints.Add(maxT);
+                splitPoints.Sort();
+
+                // Create segments between consecutive split points
+                for (int i = 0; i < splitPoints.Count - 1; i++)
+                {
+                    double startT = splitPoints[i];
+                    double endT = splitPoints[i + 1];
+
+                    if (endT > startT + 0.01) // Ignore very small segments
+                    {
+                        XYZ startPt = wallStart + dir * startT;
+                        XYZ endPt = wallStart + dir * endT;
+                        Curve segment = Line.CreateBound(startPt, endPt);
+                        result.Add(segment);
+                    }
+                }
+
+                return result;
+            }
+            catch { return result; }
         }
     }
 }
