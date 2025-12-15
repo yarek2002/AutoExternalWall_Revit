@@ -107,7 +107,8 @@ namespace Revit_AutoExternalWall
                         {
                             if (se is Room room)
                             {
-                                wallsCreated += WallUtilities.CreateExternalWallsFromRoom(doc, room, externalWallType);
+                                // Pass selected walls so room boundaries are filtered by them
+                                wallsCreated += WallUtilities.CreateExternalWallsFromRoom(doc, room, externalWallType, selectedWalls);
                             }
                         }
                         catch (Exception ex)

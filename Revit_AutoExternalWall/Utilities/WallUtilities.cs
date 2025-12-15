@@ -417,10 +417,11 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Create external walls for boundary segments of a room that are adjacent to walls.
+        /// Create external walls for boundary segments of a room that are adjacent to selected walls.
+        /// Only creates walls on room boundaries that touch the selected walls.
         /// Returns number of created walls.
         /// </summary>
-        public static int CreateExternalWallsFromRoom(Document doc, Room room, WallType wallType)
+        public static int CreateExternalWallsFromRoom(Document doc, Room room, WallType wallType, List<Wall> selectedWalls = null)
         {
             if (doc == null || room == null || wallType == null)
                 return 0;
@@ -434,6 +435,16 @@ namespace Revit_AutoExternalWall.Utilities
                 if (loops == null)
                     return 0;
 
+                // Build set of selected wall IDs for quick lookup
+                HashSet<ElementId> selectedWallIds = new HashSet<ElementId>();
+                if (selectedWalls != null && selectedWalls.Count > 0)
+                {
+                    foreach (var wall in selectedWalls)
+                    {
+                        selectedWallIds.Add(wall.Id);
+                    }
+                }
+
                 foreach (var loop in loops)
                 {
                     if (loop == null) continue;
@@ -443,6 +454,11 @@ namespace Revit_AutoExternalWall.Utilities
 
                         // BoundarySegment has ElementId referring to the boundary element (wall)
                         ElementId boundaryId = seg.ElementId;
+
+                        // Only process if this segment belongs to a selected wall (or if no walls were selected)
+                        if (selectedWalls != null && selectedWalls.Count > 0 && !selectedWallIds.Contains(boundaryId))
+                            continue;
+
                         Element boundaryElem = doc.GetElement(boundaryId);
                         if (boundaryElem is Wall innerWall)
                         {
