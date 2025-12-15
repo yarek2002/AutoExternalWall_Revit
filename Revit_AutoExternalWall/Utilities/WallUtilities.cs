@@ -433,6 +433,9 @@ namespace Revit_AutoExternalWall.Utilities
                 if (loops == null)
                     return 0;
 
+                // Cache walls to speed up nearest lookup
+                var allWalls = new FilteredElementCollector(doc).OfClass(typeof(Wall)).Cast<Wall>().ToList();
+
                 foreach (var loop in loops)
                 {
                     if (loop == null) continue;
@@ -440,14 +443,27 @@ namespace Revit_AutoExternalWall.Utilities
                     {
                         if (seg == null) continue;
 
-                        // BoundarySegment has ElementId referring to the boundary element (wall)
-                        ElementId boundaryId = seg.ElementId;
-                        Element boundaryElem = doc.GetElement(boundaryId);
-                        if (boundaryElem is Wall innerWall)
-                        {
-                            Curve innerCurve = seg.GetCurve();
-                            if (innerCurve == null) continue;
+                        Curve innerCurve = seg.GetCurve();
+                        if (innerCurve == null) continue;
 
+                        // Try to get boundary element directly
+                        ElementId boundaryId = seg.ElementId;
+                        Wall innerWall = null;
+                        if (boundaryId != ElementId.InvalidElementId)
+                        {
+                            Element boundaryElem = doc.GetElement(boundaryId);
+                            if (boundaryElem is Wall w)
+                                innerWall = w;
+                        }
+
+                        // If no direct wall reference, try to find a nearby wall whose location curve is close to the segment curve
+                        if (innerWall == null)
+                        {
+                            innerWall = FindWallNearCurve(allWalls, innerCurve);
+                        }
+
+                        if (innerWall != null)
+                        {
                             created += CreateExternalWallAlongCurve(doc, innerWall, innerCurve, wallType);
                         }
                     }
@@ -456,6 +472,42 @@ namespace Revit_AutoExternalWall.Utilities
             catch { }
 
             return created;
+        }
+
+        /// <summary>
+        /// Find a wall from a list whose location curve passes near the provided curve (by midpoint projection).
+        /// </summary>
+        private static Wall FindWallNearCurve(List<Wall> walls, Curve curve)
+        {
+            if (walls == null || curve == null) return null;
+
+            try
+            {
+                XYZ mid = curve.Evaluate(0.5, false);
+                double tol = 0.02; // ~6mm tolerance
+
+                foreach (var w in walls)
+                {
+                    try
+                    {
+                        var loc = w.Location as LocationCurve;
+                        if (loc == null || loc.Curve == null) continue;
+                        Curve wc = loc.Curve;
+
+                        IntersectionResult res = wc.Project(mid);
+                        if (res != null)
+                        {
+                            XYZ proj = wc.Evaluate(res.Parameter, false);
+                            if (proj != null && proj.DistanceTo(mid) <= tol)
+                                return w;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return null;
         }
 
         /// <summary>
