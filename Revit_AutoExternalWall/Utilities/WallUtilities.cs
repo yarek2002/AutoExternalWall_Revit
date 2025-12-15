@@ -106,8 +106,8 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    // Create wall with reversed curve
-                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, false);
+                    // Create wall with reversed curve, disable joins
+                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, JoinType.None, JoinType.None, false);
 
                     if (externalWall != null)
                     {
@@ -566,7 +566,7 @@ namespace Revit_AutoExternalWall.Utilities
                     if (offsetCurve == null || offsetCurve.Length < 0.01) continue;
 
                     Curve reversed = offsetCurve.CreateReversed();
-                    Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                    Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, JoinType.None, JoinType.None, false);
                     if (externalWall != null)
                     {
                         // Keep created wall as-is (curve used during creation should be the
@@ -739,7 +739,7 @@ namespace Revit_AutoExternalWall.Utilities
 
                 Curve offsetCurve = offsetCurves[0];
                 Curve reversed = offsetCurve.CreateReversed();
-                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, JoinType.None, JoinType.None, false);
                 if (externalWall != null)
                 {
                     CopyWallProperties(innerWall, externalWall);
