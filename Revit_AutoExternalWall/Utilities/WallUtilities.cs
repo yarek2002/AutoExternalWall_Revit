@@ -414,5 +414,98 @@ namespace Revit_AutoExternalWall.Utilities
 
             return null;
         }
+
+        /// <summary>
+        /// Create external walls for boundary segments of a room that are adjacent to walls.
+        /// Returns number of created walls.
+        /// </summary>
+        public static int CreateExternalWallsFromRoom(Document doc, Room room, WallType wallType)
+        {
+            if (doc == null || room == null || wallType == null)
+                return 0;
+
+            int created = 0;
+
+            try
+            {
+                SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
+                var loops = room.GetBoundarySegments(opt);
+                if (loops == null)
+                    return 0;
+
+                foreach (var loop in loops)
+                {
+                    if (loop == null) continue;
+                    foreach (var seg in loop)
+                    {
+                        if (seg == null) continue;
+
+                        // BoundarySegment has ElementId referring to the boundary element (wall)
+                        ElementId boundaryId = seg.ElementId;
+                        Element boundaryElem = doc.GetElement(boundaryId);
+                        if (boundaryElem is Wall innerWall)
+                        {
+                            Curve innerCurve = seg.GetCurve();
+                            if (innerCurve == null) continue;
+
+                            created += CreateExternalWallAlongCurve(doc, innerWall, innerCurve, wallType);
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return created;
+        }
+
+        /// <summary>
+        /// Create an external wall along a specific curve segment that belongs to an existing wall.
+        /// Returns number of created walls (0 or 1 normally).
+        /// </summary>
+        public static int CreateExternalWallAlongCurve(Document doc, Wall innerWall, Curve innerCurve, WallType wallType)
+        {
+            if (doc == null || innerWall == null || innerCurve == null || wallType == null)
+                return 0;
+
+            try
+            {
+                Level level = GetWallLevel(innerWall);
+                double height = GetWallHeight(innerWall);
+                if (level == null) return 0;
+
+                double existingThickness = GetWallThickness(innerWall);
+                double newWallThickness = GetWallTypeThickness(wallType);
+                double gapDistance = 0.0;
+                double totalOffsetDistance = (existingThickness / 2.0) + gapDistance + (newWallThickness / 2.0);
+
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+
+                List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
+                int created = 0;
+                foreach (Curve offsetCurve in offsetCurves)
+                {
+                    if (offsetCurve == null || offsetCurve.Length < 0.01) continue;
+
+                    Curve reversed = offsetCurve.CreateReversed();
+                    Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                    if (externalWall != null)
+                    {
+                        // try set location line parameter by name
+                        Parameter wallLocationLine = FindParameterByNameContains(externalWall, "location line");
+                        if (wallLocationLine != null && !wallLocationLine.IsReadOnly)
+                        {
+                            // 1 = Interior Side, 2 = Exterior Side (use Interior so wall inner face aligns)
+                            wallLocationLine.Set(1);
+                        }
+
+                        CopyWallProperties(innerWall, externalWall);
+                        created++;
+                    }
+                }
+
+                return created;
+            }
+            catch { return 0; }
+        }
     }
 }

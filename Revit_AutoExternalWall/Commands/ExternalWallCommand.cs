@@ -24,48 +24,50 @@ namespace Revit_AutoExternalWall
 
             try
             {
-                // Select walls
+                // Let user select walls and/or rooms. Prompt if nothing selected.
                 ICollection<ElementId> selectedIds = uiDoc.Selection.GetElementIds();
 
                 if (selectedIds.Count == 0)
                 {
-                    // Prompt user to select walls
-                    TaskDialog taskDialog = new TaskDialog("Select Walls")
+                    TaskDialog taskDialog = new TaskDialog("Select Walls or Rooms")
                     {
-                        MainInstruction = "Please select walls",
-                        MainContent = "Select the interior walls for which you want to place external walls."
+                        MainInstruction = "Please select walls and/or rooms",
+                        MainContent = "Select interior walls and/or rooms for which you want to place external walls."
                     };
                     taskDialog.Show();
 
-                    // Use selection filter for walls
                     try
                     {
-                        selectedIds = uiDoc.Selection.PickObjects(ObjectType.Element, new WallSelectionFilter())
-                            .Select(x => x.ElementId)
-                            .ToList();
+                        // Allow user to pick multiple elements (walls and rooms)
+                        var refs = uiDoc.Selection.PickObjects(ObjectType.Element);
+                        selectedIds = refs.Select(r => r.ElementId).ToList();
                     }
                     catch (Autodesk.Revit.Exceptions.OperationCanceledException)
                     {
-                        return Result.Cancelled;
+                        return Autodesk.Revit.UI.Result.Cancelled;
                     }
                 }
 
                 if (selectedIds.Count == 0)
                 {
-                    TaskDialog.Show("No Selection", "No walls selected.");
-                    return Result.Cancelled;
+                    TaskDialog.Show("No Selection", "No elements selected.");
+                    return Autodesk.Revit.UI.Result.Cancelled;
                 }
 
-                // Get selected walls
-                List<Wall> selectedWalls = selectedIds
-                    .Select(id => doc.GetElement(id) as Wall)
-                    .Where(w => w != null)
-                    .ToList();
-
-                if (selectedWalls.Count == 0)
+                // Separate selected walls and rooms
+                List<Wall> selectedWalls = new List<Wall>();
+                List<SpatialElement> selectedRooms = new List<SpatialElement>();
+                foreach (var id in selectedIds)
                 {
-                    TaskDialog.Show("Invalid Selection", "Please select at least one wall.");
-                    return Result.Cancelled;
+                    Element el = doc.GetElement(id);
+                    if (el is Wall w) selectedWalls.Add(w);
+                    else if (el is SpatialElement se && se is Room) selectedRooms.Add(se);
+                }
+
+                if (selectedWalls.Count == 0 && selectedRooms.Count == 0)
+                {
+                    TaskDialog.Show("Invalid Selection", "Please select at least one wall or one room.");
+                    return Autodesk.Revit.UI.Result.Cancelled;
                 }
 
                 // Get wall type for external walls
@@ -83,6 +85,8 @@ namespace Revit_AutoExternalWall
 
                     // Place external walls
                     int wallsCreated = 0;
+
+                    // Create walls based on selected walls
                     foreach (Wall wall in selectedWalls)
                     {
                         try
@@ -92,6 +96,22 @@ namespace Revit_AutoExternalWall
                         catch (Exception ex)
                         {
                             message += $"Error processing wall: {ex.Message}\n";
+                        }
+                    }
+
+                    // Create walls based on selected rooms (use room boundaries)
+                    foreach (var se in selectedRooms)
+                    {
+                        try
+                        {
+                            if (se is Room room)
+                            {
+                                wallsCreated += WallUtilities.CreateExternalWallsFromRoom(doc, room, externalWallType);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            message += $"Error processing room: {ex.Message}\n";
                         }
                     }
 
