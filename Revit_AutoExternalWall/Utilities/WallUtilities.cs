@@ -848,9 +848,12 @@ namespace Revit_AutoExternalWall.Utilities
                     XYZ splitPoint = start + dir * param;
                     try
                     {
-                        // Wall splitting in Revit API
-                        ICollection<ElementId> splitWallIds = wall.Document.Regenerate(); // Ensure up to date
-                        wall.SplitAtPoint(splitPoint);
+                        // Wall splitting in Revit API - use Wall.SplitWall
+                        if (wall.SplitWall(splitPoint))
+                        {
+                            // After splitting, the wall is split into two parts,
+                            // but we need the new wall IDs if we want to track them
+                        }
                     }
                     catch { }
                 }
