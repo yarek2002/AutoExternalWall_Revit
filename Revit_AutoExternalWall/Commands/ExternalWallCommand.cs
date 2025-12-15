@@ -3,6 +3,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 using Revit_AutoExternalWall.Utilities;
+using Autodesk.Revit.DB.Architecture;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -56,12 +57,12 @@ namespace Revit_AutoExternalWall
 
                 // Separate selected walls and rooms
                 List<Wall> selectedWalls = new List<Wall>();
-                List<SpatialElement> selectedRooms = new List<SpatialElement>();
+                List<Room> selectedRooms = new List<Room>();
                 foreach (var id in selectedIds)
                 {
                     Element el = doc.GetElement(id);
                     if (el is Wall w) selectedWalls.Add(w);
-                    else if (el is SpatialElement se && se is Room) selectedRooms.Add(se);
+                    else if (el is Room r) selectedRooms.Add(r);
                 }
 
                 if (selectedWalls.Count == 0 && selectedRooms.Count == 0)
