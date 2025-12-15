@@ -82,7 +82,7 @@ namespace Revit_AutoExternalWall.Utilities
                 // Offset = wall thickness / 2 + gap (0 mm) + 0.5 * wall thickness (for external wall)
                 double wallThickness = GetWallThickness(innerWall);
                 double gapDistance = wallThickness * 0.5; // 0 mm gap + 0.5 * external wall thickness
-                double totalOffsetDistance = wallThickness * 0.5 + gapDistance;
+                double totalOffsetDistance = gapDistance;
 
                 // Get wall face orientation to determine offset direction
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
