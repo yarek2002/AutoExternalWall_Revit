@@ -79,12 +79,9 @@ namespace Revit_AutoExternalWall.Utilities
                 if (level == null)
                     return 0;
 
-                // Get wall thicknesses and calculate total offset distance
-                // Offset (center-to-center) = (thickness_existing / 2) + gap + (thickness_new / 2)
-                double existingThickness = GetWallThickness(innerWall);
-                double newWallThickness = GetWallTypeThickness(wallType);
+                // Compute total offset distance (center-to-center) using shared helper
                 double gapDistance = 0.0; // gap in feet (0 = flush)
-                double totalOffsetDistance = (existingThickness / 2.0) + gapDistance + (newWallThickness / 2.0);
+                double totalOffsetDistance = ComputeCenterOffset(innerWall, wallType, gapDistance);
 
                 // Get wall face orientation to determine offset direction
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
@@ -331,6 +328,24 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Compute center-line offset (feet) between existing wall and new wall.
+        /// Formula: offset = existingThickness/2 + gap + newThickness/2
+        /// </summary>
+        private static double ComputeCenterOffset(Wall existingWall, WallType newWallType, double gapFeet)
+        {
+            try
+            {
+                double existingThickness = GetWallThickness(existingWall);
+                double newThickness = GetWallTypeThickness(newWallType);
+                return (existingThickness / 2.0) + gapFeet + (newThickness / 2.0);
+            }
+            catch
+            {
+                return 0.0;
+            }
+        }
+
+        /// <summary>
         /// Get the normal vector of the outer wall face
         /// </summary>
         private static XYZ GetWallFaceNormal(Wall wall)
@@ -490,10 +505,8 @@ namespace Revit_AutoExternalWall.Utilities
                 double height = GetWallHeight(innerWall);
                 if (level == null) return 0;
 
-                double existingThickness = GetWallThickness(innerWall);
-                double newWallThickness = GetWallTypeThickness(wallType);
                 double gapDistance = 0.0;
-                double totalOffsetDistance = (existingThickness / 2.0) + gapDistance + (newWallThickness / 2.0);
+                double totalOffsetDistance = ComputeCenterOffset(innerWall, wallType, gapDistance);
 
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
 
