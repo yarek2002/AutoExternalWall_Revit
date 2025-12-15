@@ -555,8 +555,7 @@ namespace Revit_AutoExternalWall.Utilities
                 double height = GetWallHeight(innerWall);
                 if (level == null) return 0;
 
-                double existingThickness = GetWallThickness(innerWall);
-                double totalOffsetDistance = existingThickness;
+                double totalOffsetDistance = ComputeCenterOffset(innerWall, wallType, 0.0);
 
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
 
