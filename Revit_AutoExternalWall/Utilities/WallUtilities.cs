@@ -113,7 +113,8 @@ namespace Revit_AutoExternalWall.Utilities
                     {
                         // Do not change the wall "Location Line" parameter here —
                         // changing it can re-interpret the creation curve and shift the wall.
-                        externalWall.AllowJoin = false; // Disable wall joins
+                        // Disable wall joins by setting the "Allow Join" parameter
+                        DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
                         wallsCreated++;
                     }
@@ -435,6 +436,22 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Disable wall joins by setting the "Allow Join" parameter to false
+        /// </summary>
+        private static void DisableWallJoins(Wall wall)
+        {
+            try
+            {
+                Parameter allowJoinParam = FindParameterByNameContains(wall, "allow join");
+                if (allowJoinParam != null)
+                {
+                    allowJoinParam.Set(0); // 0 = False (disable joins)
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
         /// Create external walls for boundary segments of selected rooms that are adjacent to selected walls.
         /// Creates complete walls covering all room boundaries, then splits them at midpoints between rooms.
         /// Returns number of created wall segments after splitting.
@@ -573,7 +590,7 @@ namespace Revit_AutoExternalWall.Utilities
                         // Keep created wall as-is (curve used during creation should be the
                         // desired location line). Avoid setting "location line" parameter
                         // programmatically which can move the wall unexpectedly.
-                        externalWall.AllowJoin = false; // Disable wall joins
+                        DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
                         created++;
                     }
@@ -744,7 +761,7 @@ namespace Revit_AutoExternalWall.Utilities
                 Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
                 if (externalWall != null)
                 {
-                    externalWall.AllowJoin = false; // Disable wall joins
+                    DisableWallJoins(externalWall);
                     CopyWallProperties(innerWall, externalWall);
                 }
 
