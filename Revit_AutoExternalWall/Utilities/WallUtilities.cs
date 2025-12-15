@@ -455,8 +455,8 @@ namespace Revit_AutoExternalWall.Utilities
                         // BoundarySegment has ElementId referring to the boundary element (wall)
                         ElementId boundaryId = seg.ElementId;
 
-                        // If selectedWalls provided, skip segments that belong to selected walls (they are handled separately)
-                        if (selectedWalls != null && selectedWalls.Count > 0 && selectedWallIds.Contains(boundaryId))
+                        // Only process if this segment belongs to a selected wall (or if no walls were selected)
+                        if (selectedWalls != null && selectedWalls.Count > 0 && !selectedWallIds.Contains(boundaryId))
                             continue;
 
                         Element boundaryElem = doc.GetElement(boundaryId);
