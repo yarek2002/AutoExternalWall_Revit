@@ -106,13 +106,14 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    // Create wall with reversed curve, disable joins
-                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, JoinType.None, JoinType.None, false);
+                    // Create wall with reversed curve
+                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, false);
 
                     if (externalWall != null)
                     {
                         // Do not change the wall "Location Line" parameter here —
                         // changing it can re-interpret the creation curve and shift the wall.
+                        externalWall.AllowJoin = false; // Disable wall joins
                         CopyWallProperties(innerWall, externalWall);
                         wallsCreated++;
                     }
@@ -566,12 +567,13 @@ namespace Revit_AutoExternalWall.Utilities
                     if (offsetCurve == null || offsetCurve.Length < 0.01) continue;
 
                     Curve reversed = offsetCurve.CreateReversed();
-                    Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, JoinType.None, JoinType.None, false);
+                    Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
                     if (externalWall != null)
                     {
                         // Keep created wall as-is (curve used during creation should be the
                         // desired location line). Avoid setting "location line" parameter
                         // programmatically which can move the wall unexpectedly.
+                        externalWall.AllowJoin = false; // Disable wall joins
                         CopyWallProperties(innerWall, externalWall);
                         created++;
                     }
@@ -739,9 +741,10 @@ namespace Revit_AutoExternalWall.Utilities
 
                 Curve offsetCurve = offsetCurves[0];
                 Curve reversed = offsetCurve.CreateReversed();
-                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, JoinType.None, JoinType.None, false);
+                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
                 if (externalWall != null)
                 {
+                    externalWall.AllowJoin = false; // Disable wall joins
                     CopyWallProperties(innerWall, externalWall);
                 }
 
