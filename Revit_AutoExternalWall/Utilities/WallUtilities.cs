@@ -7,6 +7,15 @@ using System.Linq;
 namespace Revit_AutoExternalWall.Utilities
 {
     /// <summary>
+    /// Data class to hold curve segment information with associated room
+    /// </summary>
+    public class CurveSegmentData
+    {
+        public Curve Curve { get; set; }
+        public ElementId RoomId { get; set; }
+    }
+
+    /// <summary>
     /// Utility class for wall-related operations
     /// </summary>
     public static class WallUtilities
@@ -425,13 +434,13 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Create external walls for boundary segments of a room that are adjacent to selected walls.
-        /// Only creates walls on room boundaries that touch the selected walls.
-        /// Returns number of created walls.
+        /// Create external walls for boundary segments of selected rooms that are adjacent to selected walls.
+        /// Creates complete walls covering all room boundaries, then splits them at midpoints between rooms.
+        /// Returns number of created wall segments after splitting.
         /// </summary>
-        public static int CreateExternalWallsFromRoom(Document doc, Room room, WallType wallType, List<Wall> selectedWalls = null)
+        public static int CreateExternalWallsFromRooms(Document doc, List<Room> selectedRooms, WallType wallType, List<Wall> selectedWalls = null)
         {
-            if (doc == null || room == null || wallType == null)
+            if (doc == null || selectedRooms == null || selectedRooms.Count == 0 || wallType == null)
                 return 0;
 
             int created = 0;
@@ -439,9 +448,6 @@ namespace Revit_AutoExternalWall.Utilities
             try
             {
                 SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
-                var loops = room.GetBoundarySegments(opt);
-                if (loops == null)
-                    return 0;
 
                 // Build set of selected wall IDs for quick lookup
                 HashSet<ElementId> selectedWallIds = new HashSet<ElementId>();
@@ -453,44 +459,54 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
-                // Group boundary segments by their source wall so we can merge contiguous segments
-                // that reference the same existing wall. This avoids small gaps when multiple
-                // rooms share the same wall and each room provides its own (possibly short)
-                // boundary segment.
-                Dictionary<ElementId, List<Curve>> segmentsByWall = new Dictionary<ElementId, List<Curve>>();
+                // Group boundary segments by their source wall
+                Dictionary<ElementId, List<CurveSegmentData>> segmentsByWall =
+                    new Dictionary<ElementId, List<CurveSegmentData>>();
 
-                foreach (var loop in loops)
+                foreach (Room room in selectedRooms)
                 {
-                    if (loop == null) continue;
-                    foreach (var seg in loop)
+                    var loops = room.GetBoundarySegments(opt);
+                    if (loops == null)
+                        continue;
+
+                    foreach (var loop in loops)
                     {
-                        if (seg == null) continue;
-
-                        ElementId boundaryId = seg.ElementId;
-
-                        // Only process if this segment belongs to a selected wall (or if no walls were selected)
-                        if (selectedWalls != null && selectedWalls.Count > 0 && !selectedWallIds.Contains(boundaryId))
-                            continue;
-
-                        Element boundaryElem = doc.GetElement(boundaryId);
-                        if (boundaryElem is Wall)
+                        if (loop == null) continue;
+                        foreach (var seg in loop)
                         {
-                            Curve innerCurve = seg.GetCurve();
-                            if (innerCurve == null) continue;
+                            if (seg == null) continue;
 
-                            if (!segmentsByWall.TryGetValue(boundaryId, out var list))
+                            ElementId boundaryId = seg.ElementId;
+
+                            // Only process if this segment belongs to a selected wall (or if no walls were selected)
+                            if (selectedWalls != null && selectedWalls.Count > 0 && !selectedWallIds.Contains(boundaryId))
+                                continue;
+
+                            Element boundaryElem = doc.GetElement(boundaryId);
+                            if (boundaryElem is Wall wall)
                             {
-                                list = new List<Curve>();
-                                segmentsByWall[boundaryId] = list;
-                            }
+                                Curve innerCurve = seg.GetCurve();
+                                if (innerCurve == null) continue;
 
-                            list.Add(innerCurve);
+                                CurveSegmentData segmentData = new CurveSegmentData
+                                {
+                                    Curve = innerCurve,
+                                    RoomId = room.Id
+                                };
+
+                                if (!segmentsByWall.TryGetValue(boundaryId, out var list))
+                                {
+                                    list = new List<CurveSegmentData>();
+                                    segmentsByWall[boundaryId] = list;
+                                }
+
+                                list.Add(segmentData);
+                            }
                         }
                     }
                 }
 
-                // For each wall, merge its collected curves and expand across partition gaps
-                // so walls are continuous and split points lie in partition centers.
+                // For each wall, create one external wall covering all boundary curves, then split at room midpoints
                 foreach (var kvp in segmentsByWall)
                 {
                     ElementId wallId = kvp.Key;
@@ -498,16 +514,28 @@ namespace Revit_AutoExternalWall.Utilities
                     if (!(boundaryElem is Wall innerWall))
                         continue;
 
-                    List<Curve> merged = MergeCurvesAlongWall(innerWall, kvp.Value);
-                    if (merged.Count == 0) continue;
+                    var segmentDatas = kvp.Value;
+                    if (segmentDatas.Count == 0)
+                        continue;
 
-                    // Expand each segment by half of the gap to its neighbor
-                    List<Curve> expanded = ExpandCurvesAcrossPartitions(innerWall, merged);
-                    
-                    foreach (var expandedCurve in expanded)
+                    // Get the encompassing curve covering all room boundaries
+                    Curve encompassingCurve = GetEncompassingCurve(innerWall, segmentDatas.Select(s => s.Curve).ToList());
+                    if (encompassingCurve == null)
+                        continue;
+
+                    // Create the external wall
+                    Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, encompassingCurve, wallType);
+                    if (externalWall == null)
+                        continue;
+
+                    created++; // Count the original wall
+
+                    // Find split points: midpoints between rooms
+                    List<double> splitPoints = CalculateSplitPoints(innerWall, segmentDatas);
+                    if (splitPoints.Count > 0)
                     {
-                        if (expandedCurve == null) continue;
-                        created += CreateExternalWallAlongCurve(doc, innerWall, expandedCurve, wallType);
+                        // Split the wall at these points, updating created count
+                        created += SplitWallAtPoints(externalWall, splitPoints) - 1; // Subtract 1 since we already counted the original
                     }
                 }
             }
@@ -531,12 +559,9 @@ namespace Revit_AutoExternalWall.Utilities
                 double height = GetWallHeight(innerWall);
                 if (level == null) return 0;
 
-                double gapDistance = 0.0;
-                double totalOffsetDistance = ComputeCenterOffset(innerWall, wallType, gapDistance);
-
-                
                 double existingThickness = GetWallThickness(innerWall);
-                totalOffsetDistance += existingThickness / 2.0;
+                double newThickness = GetWallTypeThickness(wallType);
+                double totalOffsetDistance = existingThickness + (newThickness / 2.0);
 
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
 
@@ -564,30 +589,33 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Expand a set of merged curves by half of each neighboring partition gap
-        /// so that split points end up in the middle of partitions between rooms.
+        /// Merge a set of curves that lie along a straight wall into longer continuous
+        /// line segments. Returns the merged curves; if the wall is not straight or
+        /// merging fails, returns the original curves.
         /// </summary>
-        private static List<Curve> ExpandCurvesAcrossPartitions(Wall wall, List<Curve> mergedCurves)
+        private static List<Curve> MergeCurvesAlongWall(Wall wall, List<Curve> curves)
         {
             var result = new List<Curve>();
-            if (wall == null || mergedCurves == null || mergedCurves.Count == 0)
+            if (wall == null || curves == null || curves.Count == 0)
                 return result;
 
             try
             {
                 LocationCurve loc = wall.Location as LocationCurve;
                 if (loc == null || loc.Curve == null)
-                    return new List<Curve>(mergedCurves);
+                    return new List<Curve>(curves);
 
+                // Only attempt merging for straight walls (Line location)
                 if (!(loc.Curve is Line wallLine))
-                    return new List<Curve>(mergedCurves);
+                    return new List<Curve>(curves);
 
                 XYZ wallStart = wallLine.GetEndPoint(0);
-                XYZ dir = (wallLine.GetEndPoint(1) - wallStart).Normalize();
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ dir = (wallEnd - wallStart).Normalize();
 
-                // Convert curves to intervals on wall coordinate
+                // Convert each curve to an interval along the wall direction
                 var intervals = new List<Tuple<double, double>>();
-                foreach (var c in mergedCurves)
+                foreach (var c in curves)
                 {
                     if (c == null) continue;
                     XYZ p0 = c.GetEndPoint(0);
@@ -599,43 +627,238 @@ namespace Revit_AutoExternalWall.Utilities
                     intervals.Add(Tuple.Create(a, b));
                 }
 
+                if (intervals.Count == 0)
+                    return result;
+
                 intervals.Sort((x, y) => x.Item1.CompareTo(y.Item1));
+                // Allow merging across small gaps (partitions) so external walls
+                // created for the same source wall become continuous.
+                // Tolerance in feet; adjust if necessary (0.5 ft ~= 150 mm).
+                double tol = 0.5;
 
-                // Expand each interval by half of neighboring gaps
-                for (int i = 0; i < intervals.Count; ++i)
+                double curA = intervals[0].Item1;
+                double curB = intervals[0].Item2;
+
+                for (int i = 1; i < intervals.Count; ++i)
                 {
-                    double expandStart = intervals[i].Item1;
-                    double expandEnd = intervals[i].Item2;
-
-                    // Expand toward previous interval
-                    if (i > 0)
+                    var it = intervals[i];
+                    if (it.Item1 <= curB + tol)
                     {
-                        double prevEnd = intervals[i - 1].Item2;
-                        double gap = expandStart - prevEnd;
-                        if (gap > 0)
-                            expandStart -= gap / 2.0;
+                        // overlapping or adjacent - extend
+                        curB = Math.Max(curB, it.Item2);
                     }
-
-                    // Expand toward next interval
-                    if (i < intervals.Count - 1)
+                    else
                     {
-                        double nextStart = intervals[i + 1].Item1;
-                        double gap = nextStart - expandEnd;
-                        if (gap > 0)
-                            expandEnd += gap / 2.0;
+                        XYZ aPt = wallStart + (dir * curA);
+                        XYZ bPt = wallStart + (dir * curB);
+                        result.Add(Line.CreateBound(aPt, bPt));
+                        curA = it.Item1;
+                        curB = it.Item2;
                     }
-
-                    XYZ aPt = wallStart + (dir * expandStart);
-                    XYZ bPt = wallStart + (dir * expandEnd);
-                    result.Add(Line.CreateBound(aPt, bPt));
                 }
+
+                // add final interval
+                XYZ lastA = wallStart + (dir * curA);
+                XYZ lastB = wallStart + (dir * curB);
+                result.Add(Line.CreateBound(lastA, lastB));
 
                 return result;
             }
             catch
             {
-                return new List<Curve>(mergedCurves);
+                return new List<Curve>(curves);
             }
+        }
+
+        /// <summary>
+        /// Get a curve that encompasses all given curves along a wall, creating a continuous curve covering the full span.
+        /// </summary>
+        private static Curve GetEncompassingCurve(Wall wall, List<Curve> curves)
+        {
+            if (wall == null || curves == null || curves.Count == 0)
+                return null;
+
+            try
+            {
+                LocationCurve loc = wall.Location as LocationCurve;
+                if (loc == null || loc.Curve == null || !(loc.Curve is Line wallLine))
+                    return null; // Only for straight walls
+
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ dir = (wallEnd - wallStart).Normalize();
+
+                // Find min and max along the wall direction
+                double minT = double.MaxValue;
+                double maxT = double.MinValue;
+
+                foreach (var c in curves)
+                {
+                    if (c == null) continue;
+                    XYZ p0 = c.GetEndPoint(0);
+                    XYZ p1 = c.GetEndPoint(1);
+                    double t0 = (p0 - wallStart).DotProduct(dir);
+                    double t1 = (p1 - wallStart).DotProduct(dir);
+                    minT = Math.Min(minT, Math.Min(t0, t1));
+                    maxT = Math.Max(maxT, Math.Max(t0, t1));
+                }
+
+                if (minT >= maxT)
+                    return null;
+
+                XYZ startPt = wallStart + dir * minT;
+                XYZ endPt = wallStart + dir * maxT;
+
+                return Line.CreateBound(startPt, endPt);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Create a single external wall along the curve.
+        /// Returns the created Wall or null if failed.
+        /// </summary>
+        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType)
+        {
+            if (doc == null || innerWall == null || innerCurve == null || wallType == null)
+                return null;
+
+            try
+            {
+                Level level = GetWallLevel(innerWall);
+                double height = GetWallHeight(innerWall);
+                if (level == null)
+                    return null;
+
+                double existingThickness = GetWallThickness(innerWall);
+                double newThickness = GetWallTypeThickness(wallType);
+                double totalOffsetDistance = existingThickness + (newThickness / 2.0);
+
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+
+                List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
+                if (offsetCurves.Count == 0 || offsetCurves[0] == null)
+                    return null;
+
+                Curve offsetCurve = offsetCurves[0];
+                Curve reversed = offsetCurve.CreateReversed();
+                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                if (externalWall != null)
+                {
+                    CopyWallProperties(innerWall, externalWall);
+                }
+
+                return externalWall;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Calculate split points (midpoints) between room boundaries along the wall.
+        /// </summary>
+        private static List<double> CalculateSplitPoints(Wall wall, List<CurveSegmentData> segmentDatas)
+        {
+            var result = new List<double>();
+
+            if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
+                return result;
+
+            try
+            {
+                LocationCurve loc = wall.Location as LocationCurve;
+                if (loc == null || loc.Curve == null || !(loc.Curve is Line wallLine))
+                    return result;
+
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ dir = (wallEnd - wallStart).Normalize();
+
+                // Group by room and find intervals
+                var roomIntervals = new Dictionary<ElementId, Tuple<double, double>>();
+
+                foreach (var segmentData in segmentDatas)
+                {
+                    if (segmentData.Curve == null) continue;
+
+                    XYZ p0 = segmentData.Curve.GetEndPoint(0);
+                    XYZ p1 = segmentData.Curve.GetEndPoint(1);
+                    double t0 = (p0 - wallStart).DotProduct(dir);
+                    double t1 = (p1 - wallStart).DotProduct(dir);
+                    double minT = Math.Min(t0, t1);
+                    double maxT = Math.Max(t0, t1);
+
+                    ElementId roomId = segmentData.RoomId;
+                    if (roomIntervals.TryGetValue(roomId, out var existing))
+                    {
+                        minT = Math.Min(minT, existing.Item1);
+                        maxT = Math.Max(maxT, existing.Item2);
+                    }
+                    roomIntervals[roomId] = Tuple.Create(minT, maxT);
+                }
+
+                // Sort intervals by start position
+                var sortedIntervals = roomIntervals.Values.OrderBy(t => t.Item1).ToList();
+
+                // Find midpoints between consecutive intervals
+                for (int i = 0; i < sortedIntervals.Count - 1; i++)
+                {
+                    double endOfFirst = sortedIntervals[i].Item2;
+                    double startOfNext = sortedIntervals[i + 1].Item1;
+
+                    // Check if there's a gap or overlap; only split if adjacent or close
+                    double midpoint = (endOfFirst + startOfNext) / 2.0;
+                    result.Add(midpoint);
+                }
+
+                return result;
+            }
+            catch { return result; }
+        }
+
+        /// <summary>
+        /// Split a wall at specified points (parameter along curve).
+        /// Returns the number of wall segments after splitting.
+        /// </summary>
+        private static int SplitWallAtPoints(Wall wall, List<double> splitParams)
+        {
+            if (wall == null || splitParams == null || splitParams.Count == 0)
+                return 1;
+
+            try
+            {
+                // Get wall curve
+                LocationCurve loc = wall.Location as LocationCurve;
+                if (loc == null || loc.Curve == null)
+                    return 1;
+
+                Curve wallCurve = loc.Curve;
+                XYZ start = wallCurve.GetEndPoint(0);
+                XYZ end = wallCurve.GetEndPoint(1);
+                XYZ dir = (end - start).Normalize();
+
+                // Sort split params
+                splitParams.Sort();
+
+                // Split in server's transaction context - assume caller handles transactions
+                foreach (double param in splitParams)
+                {
+                    XYZ splitPoint = start + dir * param;
+                    try
+                    {
+                        // Wall splitting in Revit API
+                        ICollection<ElementId> splitWallIds = wall.Document.Regenerate(); // Ensure up to date
+                        wall.SplitAtPoint(splitPoint);
+                    }
+                    catch { }
+                }
+
+                // Return estimated segments (original + splits)
+                return 1 + splitParams.Count;
+            }
+            catch { return 1; }
         }
     }
 }

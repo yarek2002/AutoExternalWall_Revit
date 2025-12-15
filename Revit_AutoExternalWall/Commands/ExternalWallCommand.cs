@@ -104,19 +104,15 @@ namespace Revit_AutoExternalWall
                     }
 
                     // Create walls based on selected rooms (use room boundaries)
-                    foreach (var se in selectedRooms)
+                    if (selectedRooms.Count > 0)
                     {
                         try
                         {
-                            if (se is Room room)
-                            {
-                                // Pass selected walls so room boundaries are filtered by them
-                                wallsCreated += WallUtilities.CreateExternalWallsFromRoom(doc, room, externalWallType, selectedWalls);
-                            }
+                            wallsCreated += WallUtilities.CreateExternalWallsFromRooms(doc, selectedRooms, externalWallType, selectedWalls);
                         }
                         catch (Exception ex)
                         {
-                            message += $"Error processing room: {ex.Message}\n";
+                            message += $"Error processing rooms: {ex.Message}\n";
                         }
                     }
 
