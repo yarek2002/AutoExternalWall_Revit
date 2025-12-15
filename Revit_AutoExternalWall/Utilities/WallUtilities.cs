@@ -102,15 +102,8 @@ namespace Revit_AutoExternalWall.Utilities
 
                     if (externalWall != null)
                     {
-                        // Set wall location line to Interior Side
-                        // This ensures the wall is pinned to the inner face and doesn't overlap
-                        Parameter wallLocationLine = externalWall.get_Parameter(BuiltInParameter.WALL_KEY_REF_PARAM);
-                        if (wallLocationLine != null && !wallLocationLine.IsReadOnly)
-                        {
-                            wallLocationLine.Set(2); // 2 = Exterior Side
-                        }
-
-                        // Copy properties from inner wall to external wall
+                        // Do not change the wall "Location Line" parameter here —
+                        // changing it can re-interpret the creation curve and shift the wall.
                         CopyWallProperties(innerWall, externalWall);
                         wallsCreated++;
                     }
@@ -552,14 +545,9 @@ namespace Revit_AutoExternalWall.Utilities
                     Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
                     if (externalWall != null)
                     {
-                        // try set location line parameter by name
-                        Parameter wallLocationLine = FindParameterByNameContains(externalWall, "location line");
-                        if (wallLocationLine != null && !wallLocationLine.IsReadOnly)
-                        {
-                            // 1 = Interior Side, 2 = Exterior Side (use Interior so wall inner face aligns)
-                            wallLocationLine.Set(1);
-                        }
-
+                        // Keep created wall as-is (curve used during creation should be the
+                        // desired location line). Avoid setting "location line" parameter
+                        // programmatically which can move the wall unexpectedly.
                         CopyWallProperties(innerWall, externalWall);
                         created++;
                     }
@@ -613,7 +601,10 @@ namespace Revit_AutoExternalWall.Utilities
                     return result;
 
                 intervals.Sort((x, y) => x.Item1.CompareTo(y.Item1));
-                double tol = 1e-6;
+                // Allow merging across small gaps (partitions) so external walls
+                // created for the same source wall become continuous.
+                // Tolerance in feet; adjust if necessary (0.5 ft ~= 150 mm).
+                double tol = 0.5;
 
                 double curA = intervals[0].Item1;
                 double curB = intervals[0].Item2;
