@@ -508,6 +508,10 @@ namespace Revit_AutoExternalWall.Utilities
                 double gapDistance = 0.0;
                 double totalOffsetDistance = ComputeCenterOffset(innerWall, wallType, gapDistance);
 
+                
+                double existingThickness = GetWallThickness(innerWall);
+                totalOffsetDistance += existingThickness / 2.0;
+
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
 
                 List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
