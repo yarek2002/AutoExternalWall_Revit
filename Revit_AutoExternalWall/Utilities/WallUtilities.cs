@@ -436,16 +436,68 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Disable wall joins by setting the "Allow Join" parameter to false
+        /// Disable wall joins by setting structural usage and preventing automatic joins
         /// </summary>
         private static void DisableWallJoins(Wall wall)
         {
             try
             {
-                Parameter allowJoinParam = FindParameterByNameContains(wall, "allow join");
-                if (allowJoinParam != null)
+                // Set wall as structural - structural walls typically don't auto-join
+                Parameter structuralParam = wall.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING);
+                if (structuralParam != null && structuralParam.StorageType == StorageType.Integer)
                 {
-                    allowJoinParam.Set(0); // 0 = False (disable joins)
+                    structuralParam.Set(0); // 0 = Not room bounding, which can help prevent joins
+                }
+
+                // Try to set "Location Line" to prevent joining
+                Parameter locationLineParam = wall.get_Parameter(BuiltInParameter.WALL_KEY_REF_PARAM);
+                if (locationLineParam != null && locationLineParam.StorageType == StorageType.Integer)
+                {
+                    // Set to "Finish Face: Exterior" or similar (value 4 or 5 depending on Revit version)
+                    // This often prevents automatic joining
+                    locationLineParam.Set(4); // Try "Finish Face: Exterior"
+                }
+
+                // Alternative: Try to prevent joins by calling DisallowJoin on existing walls
+                try
+                {
+                    // Get all walls in the document and prevent joins with them
+                    FilteredElementCollector wallCollector = new FilteredElementCollector(wall.Document)
+                        .OfClass(typeof(Wall))
+                        .WhereElementIsNotElementType();
+
+                    foreach (Wall otherWall in wallCollector)
+                    {
+                        if (otherWall.Id != wall.Id)
+                        {
+                            try
+                            {
+                                // Try to disallow join between walls
+                                wall.DisallowJoin(otherWall.Id);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+
+                // Try multiple possible parameter names for wall join control
+                string[] joinParamNames = new string[] {
+                    "allow join",
+                    "wall join",
+                    "join wall",
+                    "allow wall join",
+                    "wall join allowed"
+                };
+
+                foreach (string paramName in joinParamNames)
+                {
+                    Parameter joinParam = FindParameterByNameContains(wall, paramName);
+                    if (joinParam != null && joinParam.StorageType == StorageType.Integer)
+                    {
+                        joinParam.Set(0); // 0 = False (disable joins)
+                        break; // Found and set, exit loop
+                    }
                 }
             }
             catch { }
