@@ -49,6 +49,7 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Offset a line segment in the direction of the given normal
+        /// Extends the line by 1000 feet in both directions before offsetting to allow walls to meet at external corners
         /// </summary>
         private static Curve OffsetLine(Line line, double distance, XYZ direction)
         {
@@ -57,12 +58,20 @@ namespace Revit_AutoExternalWall.Utilities
                 XYZ start = line.GetEndPoint(0);
                 XYZ end = line.GetEndPoint(1);
 
-                // Normalize direction to unit vector
+                // Get line direction
+                XYZ dir = (end - start).Normalize();
+
+                // Extend the line by 1000 feet in both directions to ensure it reaches external corners
+                double extension = 1000.0; // feet - sufficient for building scales
+                XYZ extendedStart = start - dir * extension;
+                XYZ extendedEnd = end + dir * extension;
+
+                // Normalize offset direction
                 XYZ normalizedDir = direction.Normalize();
 
-                // Calculate offset points
-                XYZ offsetStart = start + normalizedDir * distance;
-                XYZ offsetEnd = end + normalizedDir * distance;
+                // Calculate offset points on the extended line
+                XYZ offsetStart = extendedStart + normalizedDir * distance;
+                XYZ offsetEnd = extendedEnd + normalizedDir * distance;
 
                 // Create offset line
                 return Line.CreateBound(offsetStart, offsetEnd);
