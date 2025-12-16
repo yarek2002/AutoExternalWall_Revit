@@ -71,6 +71,7 @@ namespace Revit_AutoExternalWall.Utilities
                 return 0;
 
             int wallsCreated = 0;
+            List<Curve> createdExternalCurves = new List<Curve>();
 
             try
             {
@@ -106,8 +107,13 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    // Create wall with reversed curve
-                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, false);
+                    // Trim against previously created external walls to avoid crossing at L-shaped corners
+                    Curve trimmedCurve = TrimCurveAgainstExisting(reversedCurve, createdExternalCurves);
+                    if (trimmedCurve == null)
+                        continue;
+
+                    // Create wall with trimmed curve
+                    Wall externalWall = Wall.Create(doc, trimmedCurve, wallType.Id, level.Id, height, 0.0, false, false);
 
                     if (externalWall != null)
                     {
@@ -116,6 +122,7 @@ namespace Revit_AutoExternalWall.Utilities
                         // Disable wall joins by setting the "Allow Join" parameter
                         DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
+                        createdExternalCurves.Add(trimmedCurve);
                         wallsCreated++;
                     }
                 }
@@ -459,6 +466,71 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Trim a candidate wall curve so it does not intersect already created external wall curves.
+        /// Only supports straight line curves (most external offset cases).
+        /// Returns the trimmed curve, or null if it becomes too short to place.
+        /// </summary>
+        private static Curve TrimCurveAgainstExisting(Curve candidate, List<Curve> existingCurves, double trimOffsetFeet = 0.2)
+        {
+            if (candidate == null || !(candidate is Line candLine))
+                return candidate;
+
+            if (existingCurves == null || existingCurves.Count == 0)
+                return candidate;
+
+            // Minimum usable length after trimming (in feet)
+            const double minLength = 0.5; // ~150 mm
+
+            XYZ start = candLine.GetEndPoint(0);
+            XYZ end = candLine.GetEndPoint(1);
+            XYZ dir = (end - start).Normalize();
+
+            foreach (Curve existing in existingCurves)
+            {
+                if (existing == null)
+                    continue;
+
+                try
+                {
+                    SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
+                    if (res != SetComparisonResult.Overlap || arr == null || arr.IsEmpty)
+                        continue;
+
+                    IntersectionResult ir = arr.get_Item(0);
+                    XYZ p = ir?.XYZPoint;
+                    if (p == null)
+                        continue;
+
+                    double distStart = p.DistanceTo(start);
+                    double distEnd = p.DistanceTo(end);
+
+                    // Trim the endpoint that is closer to the intersection so the new wall
+                    // stops before the crossing point.
+                    if (distStart <= distEnd)
+                    {
+                        start = p + (dir * trimOffsetFeet);
+                    }
+                    else
+                    {
+                        end = p - (dir * trimOffsetFeet);
+                    }
+
+                    if (start.DistanceTo(end) < minLength)
+                        return null;
+
+                    candLine = Line.CreateBound(start, end);
+                    dir = (end - start).Normalize();
+                }
+                catch
+                {
+                    // Ignore individual intersection failures and keep the current curve
+                }
+            }
+
+            return candLine;
+        }
+
+        /// <summary>
         /// Create external walls for boundary segments of selected rooms that are adjacent to selected walls.
         /// Creates complete walls covering all room boundaries, then splits them at midpoints between rooms.
         /// Returns number of created wall segments after splitting.
@@ -469,6 +541,7 @@ namespace Revit_AutoExternalWall.Utilities
                 return 0;
 
             int created = 0;
+            List<Curve> createdExternalCurves = new List<Curve>();
 
             try
             {
@@ -552,7 +625,7 @@ namespace Revit_AutoExternalWall.Utilities
                     // Create external walls for each segment
                     foreach (Curve segment in wallSegments)
                     {
-                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType);
+                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves);
                         if (externalWall != null)
                         {
                             created++;
@@ -586,12 +659,18 @@ namespace Revit_AutoExternalWall.Utilities
 
                 List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
                 int created = 0;
+                List<Curve> createdExternalCurves = new List<Curve>();
+
                 foreach (Curve offsetCurve in offsetCurves)
                 {
                     if (offsetCurve == null || offsetCurve.Length < 0.01) continue;
 
                     Curve reversed = offsetCurve.CreateReversed();
-                    Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                    Curve trimmed = TrimCurveAgainstExisting(reversed, createdExternalCurves);
+                    if (trimmed == null)
+                        continue;
+
+                    Wall externalWall = Wall.Create(doc, trimmed, wallType.Id, level.Id, height, 0.0, false, false);
                     if (externalWall != null)
                     {
                         // Keep created wall as-is (curve used during creation should be the
@@ -599,6 +678,7 @@ namespace Revit_AutoExternalWall.Utilities
                         // programmatically which can move the wall unexpectedly.
                         DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
+                        createdExternalCurves.Add(trimmed);
                         created++;
                     }
                 }
@@ -741,7 +821,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// Create a single external wall along the curve.
         /// Returns the created Wall or null if failed.
         /// </summary>
-        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType)
+        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType, List<Curve> existingExternalCurves = null)
         {
             if (doc == null || innerWall == null || innerCurve == null || wallType == null)
                 return null;
@@ -765,11 +845,16 @@ namespace Revit_AutoExternalWall.Utilities
 
                 Curve offsetCurve = offsetCurves[0];
                 Curve reversed = offsetCurve.CreateReversed();
-                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                Curve trimmed = TrimCurveAgainstExisting(reversed, existingExternalCurves);
+                if (trimmed == null)
+                    return null;
+
+                Wall externalWall = Wall.Create(doc, trimmed, wallType.Id, level.Id, height, 0.0, false, false);
                 if (externalWall != null)
                 {
                     DisableWallJoins(externalWall);
                     CopyWallProperties(innerWall, externalWall);
+                    existingExternalCurves?.Add(trimmed);
                 }
 
                 return externalWall;
