@@ -530,19 +530,75 @@ namespace Revit_AutoExternalWall.Utilities
                         }
                     }
 
+                    // Precompute data for existing line in XY
+                    if (!(existing is Line exLine))
+                        continue;
+
+                    XYZ exA = exLine.GetEndPoint(0);
+                    XYZ exB = exLine.GetEndPoint(1);
+                    XYZ exDir = (exB - exA).Normalize();
+                    // Normal in XY plane (perpendicular to existing wall axis)
+                    XYZ exNormal = new XYZ(-exDir.Y, exDir.X, 0.0);
+
                     foreach (var p in hits)
                     {
                         if (p == null)
                             continue;
 
+                        // Signed distance from intersection to existing wall center line along its normal
+                        double dHit = (p - exA).DotProduct(exNormal);
+
+                        // If no trim offset (half-thickness) is provided, just cut at intersection
+                        if (Math.Abs(trimOffsetFeet) < 1e-6)
+                        {
+                            double distStart0 = p.DistanceTo(start);
+                            double distEnd0 = p.DistanceTo(end);
+                            if (distStart0 <= distEnd0)
+                                start = p;
+                            else
+                                end = p;
+
+                            if (start.DistanceTo(end) < minLength)
+                                return null;
+
+                            candLine = Line.CreateBound(start, end);
+                            dir = (end - start).Normalize();
+                            continue;
+                        }
+
+                        // Target signed distance: move endpoint so candidate ends at wall face (center +/- half-thickness)
+                        double target = (dHit >= 0 ? 1.0 : -1.0) * trimOffsetFeet;
+
+                        // Decide which end to move (closer to intersection along the candidate)
                         double distStart = p.DistanceTo(start);
                         double distEnd = p.DistanceTo(end);
+                        bool moveStart = distStart <= distEnd;
 
-                        // Trim the nearer end away from the intersection point
-                        if (distStart <= distEnd)
-                            start = p + (dir * trimOffsetFeet);
+                        XYZ basePt = moveStart ? start : end;
+
+                        // Signed distance of base point to existing wall center line
+                        double a0 = (basePt - exA).DotProduct(exNormal);
+                        double denom = dir.DotProduct(exNormal);
+
+                        if (Math.Abs(denom) < 1e-9)
+                        {
+                            // Candidate is nearly parallel to existing wall; fall back to cutting at intersection
+                            if (moveStart)
+                                start = p;
+                            else
+                                end = p;
+                        }
                         else
-                            end = p - (dir * trimOffsetFeet);
+                        {
+                            // Solve for t along candidate direction so that new point has distance "target" to existing wall center line
+                            double t = (target - a0) / denom;
+                            XYZ newPt = basePt + dir * t;
+
+                            if (moveStart)
+                                start = newPt;
+                            else
+                                end = newPt;
+                        }
 
                         if (start.DistanceTo(end) < minLength)
                             return null;
