@@ -619,7 +619,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// <summary>
         /// Trim a candidate wall curve against already created external walls.
         /// Почти то же, что TrimCurveAgainstExisting, но не обрезает в узлах выпуклых углов
-        /// (когда пересечение попадает в конец и новой, и существующей внешней стены).
+        /// (когда пересечение попадает в конец одной из внешних стен — новой или уже созданной).
         /// </summary>
         private static Curve TrimCurveAgainstExternalCurves(Curve candidate, IEnumerable<Curve> externalCurves, double trimOffsetFeet = 0.0)
         {
@@ -630,7 +630,7 @@ namespace Revit_AutoExternalWall.Utilities
                 return candidate;
 
             const double minLength = 0.5; // ~150 mm
-            const double cornerTol = 0.1; // ~30 mm, для распознавания узлов на торцах
+            const double cornerTol = 0.25; // ~75 mm, для распознавания узлов на торцах
 
             XYZ start = candLine.GetEndPoint(0);
             XYZ end = candLine.GetEndPoint(1);
@@ -678,10 +678,10 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
-                        // Проверка на выпуклый угол: узел в районе торцов обеих стен
+                        // Проверка на выпуклый угол: узел в районе торцов хотя бы одной из стен
                         double hitToExistingEnd = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
                         double hitToCandidateEnd = Math.Min(p.DistanceTo(start), p.DistanceTo(end));
-                        if (hitToExistingEnd < cornerTol && hitToCandidateEnd < cornerTol)
+                        if (hitToExistingEnd < cornerTol || hitToCandidateEnd < cornerTol)
                         {
                             // Это "хороший" угол — не обрезаем по нему
                             continue;
