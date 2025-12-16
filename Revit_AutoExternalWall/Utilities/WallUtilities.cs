@@ -74,6 +74,9 @@ namespace Revit_AutoExternalWall.Utilities
             List<Curve> createdExternalCurves = new List<Curve>();
             // Existing walls (straight location) to avoid intersecting with them
             List<Curve> existingWallCurves = GetExistingWallCurves(doc, innerWall);
+            // Half-thicknesses for trimming at wall faces instead of center lines
+            double existingHalfThickness = GetWallThickness(innerWall) / 2.0;
+            double externalHalfThickness = GetWallTypeThickness(wallType) / 2.0;
 
             try
             {
@@ -109,10 +112,13 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    // Trim against existing walls + previously created external walls to avoid crossings
-                    List<Curve> blocking = new List<Curve>(existingWallCurves);
-                    blocking.AddRange(createdExternalCurves);
-                    Curve trimmedCurve = TrimCurveAgainstExisting(reversedCurve, blocking);
+                    // 1) Trim against existing walls (stop at their face)
+                    Curve trimmedCurve = TrimCurveAgainstExisting(reversedCurve, existingWallCurves, existingHalfThickness);
+                    if (trimmedCurve == null)
+                        continue;
+
+                    // 2) Trim against already created external walls (stop at their face)
+                    trimmedCurve = TrimCurveAgainstExisting(trimmedCurve, createdExternalCurves, externalHalfThickness);
                     if (trimmedCurve == null)
                         continue;
 
@@ -715,15 +721,21 @@ namespace Revit_AutoExternalWall.Utilities
                 int created = 0;
                 List<Curve> createdExternalCurves = new List<Curve>();
                 List<Curve> existingWallCurves = GetExistingWallCurves(doc, innerWall);
+                double existingHalfThickness = GetWallThickness(innerWall) / 2.0;
+                double externalHalfThickness = GetWallTypeThickness(wallType) / 2.0;
 
                 foreach (Curve offsetCurve in offsetCurves)
                 {
                     if (offsetCurve == null || offsetCurve.Length < 0.01) continue;
 
                     Curve reversed = offsetCurve.CreateReversed();
-                    List<Curve> blocking = new List<Curve>(existingWallCurves);
-                    blocking.AddRange(createdExternalCurves);
-                    Curve trimmed = TrimCurveAgainstExisting(reversed, blocking);
+                    // 1) trim against existing walls
+                    Curve trimmed = TrimCurveAgainstExisting(reversed, existingWallCurves, existingHalfThickness);
+                    if (trimmed == null)
+                        continue;
+
+                    // 2) trim against already created external walls
+                    trimmed = TrimCurveAgainstExisting(trimmed, createdExternalCurves, externalHalfThickness);
                     if (trimmed == null)
                         continue;
 
@@ -902,10 +914,19 @@ namespace Revit_AutoExternalWall.Utilities
 
                 Curve offsetCurve = offsetCurves[0];
                 Curve reversed = offsetCurve.CreateReversed();
-                List<Curve> blocking = new List<Curve>();
-                if (existingWallCurves != null) blocking.AddRange(existingWallCurves);
-                if (existingExternalCurves != null) blocking.AddRange(existingExternalCurves);
-                Curve trimmed = TrimCurveAgainstExisting(reversed, blocking);
+                // 1) trim against existing walls
+                List<Curve> existingWalls = existingWallCurves ?? new List<Curve>();
+                Curve trimmed = TrimCurveAgainstExisting(reversed, existingWalls, existingThickness / 2.0);
+                if (trimmed == null)
+                    return null;
+
+                // 2) trim against already created external walls
+                if (existingExternalCurves != null && existingExternalCurves.Count > 0)
+                {
+                    trimmed = TrimCurveAgainstExisting(trimmed, existingExternalCurves, newThickness / 2.0);
+                    if (trimmed == null)
+                        return null;
+                }
                 if (trimmed == null)
                     return null;
 
