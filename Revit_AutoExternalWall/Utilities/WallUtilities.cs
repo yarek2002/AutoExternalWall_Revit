@@ -72,6 +72,8 @@ namespace Revit_AutoExternalWall.Utilities
 
             int wallsCreated = 0;
             List<Curve> createdExternalCurves = new List<Curve>();
+            // Existing walls (straight location) to avoid intersecting with them
+            List<Curve> existingWallCurves = GetExistingWallCurves(doc, innerWall);
 
             try
             {
@@ -107,8 +109,10 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    // Trim against previously created external walls to avoid crossing at L-shaped corners
-                    Curve trimmedCurve = TrimCurveAgainstExisting(reversedCurve, createdExternalCurves);
+                    // Trim against existing walls + previously created external walls to avoid crossings
+                    List<Curve> blocking = new List<Curve>(existingWallCurves);
+                    blocking.AddRange(createdExternalCurves);
+                    Curve trimmedCurve = TrimCurveAgainstExisting(reversedCurve, blocking);
                     if (trimmedCurve == null)
                         continue;
 
@@ -466,16 +470,16 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Trim a candidate wall curve so it does not intersect already created external wall curves.
-        /// Only supports straight line curves (most external offset cases).
-        /// Returns the trimmed curve, or null if it becomes too short to place.
+        /// Trim a candidate wall curve so it does not intersect provided curves
+        /// (existing walls or already created external walls).
+        /// Only supports straight line curves. Returns the trimmed curve, or null if it becomes too short.
         /// </summary>
-        private static Curve TrimCurveAgainstExisting(Curve candidate, List<Curve> existingCurves, double trimOffsetFeet = 0.2)
+        private static Curve TrimCurveAgainstExisting(Curve candidate, IEnumerable<Curve> existingCurves, double trimOffsetFeet = 0.2)
         {
             if (candidate == null || !(candidate is Line candLine))
                 return candidate;
 
-            if (existingCurves == null || existingCurves.Count == 0)
+            if (existingCurves == null)
                 return candidate;
 
             // Minimum usable length after trimming (in feet)
@@ -531,6 +535,35 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Collect straight location curves from existing walls in the document,
+        /// optionally excluding a specific wall (e.g., the source wall).
+        /// </summary>
+        private static List<Curve> GetExistingWallCurves(Document doc, Wall excludeWall = null)
+        {
+            var curves = new List<Curve>();
+            try
+            {
+                var walls = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Wall))
+                    .Cast<Wall>();
+
+                foreach (var w in walls)
+                {
+                    if (excludeWall != null && w.Id == excludeWall.Id)
+                        continue;
+
+                    if (w.Location is LocationCurve lc && lc.Curve is Line line)
+                    {
+                        curves.Add(line);
+                    }
+                }
+            }
+            catch { }
+
+            return curves;
+        }
+
+        /// <summary>
         /// Create external walls for boundary segments of selected rooms that are adjacent to selected walls.
         /// Creates complete walls covering all room boundaries, then splits them at midpoints between rooms.
         /// Returns number of created wall segments after splitting.
@@ -542,6 +575,7 @@ namespace Revit_AutoExternalWall.Utilities
 
             int created = 0;
             List<Curve> createdExternalCurves = new List<Curve>();
+            List<Curve> existingWallCurves = GetExistingWallCurves(doc);
 
             try
             {
@@ -625,7 +659,7 @@ namespace Revit_AutoExternalWall.Utilities
                     // Create external walls for each segment
                     foreach (Curve segment in wallSegments)
                     {
-                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves);
+                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves, existingWallCurves);
                         if (externalWall != null)
                         {
                             created++;
@@ -660,13 +694,16 @@ namespace Revit_AutoExternalWall.Utilities
                 List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
                 int created = 0;
                 List<Curve> createdExternalCurves = new List<Curve>();
+                List<Curve> existingWallCurves = GetExistingWallCurves(doc, innerWall);
 
                 foreach (Curve offsetCurve in offsetCurves)
                 {
                     if (offsetCurve == null || offsetCurve.Length < 0.01) continue;
 
                     Curve reversed = offsetCurve.CreateReversed();
-                    Curve trimmed = TrimCurveAgainstExisting(reversed, createdExternalCurves);
+                    List<Curve> blocking = new List<Curve>(existingWallCurves);
+                    blocking.AddRange(createdExternalCurves);
+                    Curve trimmed = TrimCurveAgainstExisting(reversed, blocking);
                     if (trimmed == null)
                         continue;
 
@@ -821,7 +858,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// Create a single external wall along the curve.
         /// Returns the created Wall or null if failed.
         /// </summary>
-        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType, List<Curve> existingExternalCurves = null)
+        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType, List<Curve> existingExternalCurves = null, List<Curve> existingWallCurves = null)
         {
             if (doc == null || innerWall == null || innerCurve == null || wallType == null)
                 return null;
@@ -845,7 +882,10 @@ namespace Revit_AutoExternalWall.Utilities
 
                 Curve offsetCurve = offsetCurves[0];
                 Curve reversed = offsetCurve.CreateReversed();
-                Curve trimmed = TrimCurveAgainstExisting(reversed, existingExternalCurves);
+                List<Curve> blocking = new List<Curve>();
+                if (existingWallCurves != null) blocking.AddRange(existingWallCurves);
+                if (existingExternalCurves != null) blocking.AddRange(existingExternalCurves);
+                Curve trimmed = TrimCurveAgainstExisting(reversed, blocking);
                 if (trimmed == null)
                     return null;
 
