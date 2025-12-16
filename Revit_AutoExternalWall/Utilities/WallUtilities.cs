@@ -458,28 +458,7 @@ namespace Revit_AutoExternalWall.Utilities
                     locationLineParam.Set(4); // Try "Finish Face: Exterior"
                 }
 
-                // Alternative: Try to prevent joins by calling DisallowJoin on existing walls
-                try
-                {
-                    // Get all walls in the document and prevent joins with them
-                    FilteredElementCollector wallCollector = new FilteredElementCollector(wall.Document)
-                        .OfClass(typeof(Wall))
-                        .WhereElementIsNotElementType();
 
-                    foreach (Wall otherWall in wallCollector)
-                    {
-                        if (otherWall.Id != wall.Id)
-                        {
-                            try
-                            {
-                                // Try to disallow join between walls
-                                wall.DisallowJoin(otherWall.Id);
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                catch { }
 
                 // Try multiple possible parameter names for wall join control
                 string[] joinParamNames = new string[] {
