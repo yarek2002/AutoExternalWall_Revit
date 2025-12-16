@@ -117,8 +117,8 @@ namespace Revit_AutoExternalWall.Utilities
                     if (trimmedCurve == null)
                         continue;
 
-                    // 2) Trim against already created external walls (stop at their face)
-                    trimmedCurve = TrimCurveAgainstExisting(trimmedCurve, createdExternalCurves, externalHalfThickness);
+                    // 2) Trim against already created external walls (stop at их внешней грани, но не резать выпуклые углы)
+                    trimmedCurve = TrimCurveAgainstExternalCurves(trimmedCurve, createdExternalCurves, externalHalfThickness);
                     if (trimmedCurve == null)
                         continue;
 
@@ -477,7 +477,7 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Trim a candidate wall curve so it does not intersect provided curves
-        /// (existing walls or already created external walls).
+        /// (intended for existing walls).
         /// Only supports straight line curves. Returns the trimmed curve, or null if it becomes too short.
         /// </summary>
         private static Curve TrimCurveAgainstExisting(Curve candidate, IEnumerable<Curve> existingCurves, double trimOffsetFeet = 0.0)
@@ -598,6 +598,139 @@ namespace Revit_AutoExternalWall.Utilities
                                 start = newPt;
                             else
                                 end = newPt;
+                        }
+
+                        if (start.DistanceTo(end) < minLength)
+                            return null;
+
+                        candLine = Line.CreateBound(start, end);
+                        dir = (end - start).Normalize();
+                    }
+                }
+                catch
+                {
+                    // ignore and continue
+                }
+            }
+
+            return candLine;
+        }
+
+        /// <summary>
+        /// Trim a candidate wall curve against already created external walls.
+        /// Почти то же, что TrimCurveAgainstExisting, но не обрезает в узлах выпуклых углов
+        /// (когда пересечение попадает в конец и новой, и существующей внешней стены).
+        /// </summary>
+        private static Curve TrimCurveAgainstExternalCurves(Curve candidate, IEnumerable<Curve> externalCurves, double trimOffsetFeet = 0.0)
+        {
+            if (candidate == null || !(candidate is Line candLine))
+                return candidate;
+
+            if (externalCurves == null)
+                return candidate;
+
+            const double minLength = 0.5; // ~150 mm
+            const double cornerTol = 0.1; // ~30 mm, для распознавания узлов на торцах
+
+            XYZ start = candLine.GetEndPoint(0);
+            XYZ end = candLine.GetEndPoint(1);
+            XYZ dir = (end - start).Normalize();
+
+            foreach (Curve existing in externalCurves)
+            {
+                if (existing == null) continue;
+
+                try
+                {
+                    SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
+                    if (res == SetComparisonResult.Disjoint)
+                        continue;
+
+                    List<XYZ> hits = new List<XYZ>();
+                    if (arr != null && !arr.IsEmpty)
+                    {
+                        for (int i = 0; i < arr.Size; i++)
+                        {
+                            XYZ p = arr.get_Item(i)?.XYZPoint;
+                            if (p != null)
+                                hits.Add(p);
+                        }
+                    }
+
+                    if (hits.Count == 0 && (res == SetComparisonResult.Overlap || res == SetComparisonResult.Subset || res == SetComparisonResult.Superset))
+                    {
+                        for (int i = 0; i < 2; i++)
+                        {
+                            XYZ ep = existing.GetEndPoint(i);
+                            if (ep != null)
+                                hits.Add(ep);
+                        }
+                    }
+
+                    if (!(existing is Line exLine))
+                        continue;
+
+                    XYZ exA = exLine.GetEndPoint(0);
+                    XYZ exB = exLine.GetEndPoint(1);
+
+                    foreach (var p in hits)
+                    {
+                        if (p == null)
+                            continue;
+
+                        // Проверка на выпуклый угол: узел в районе торцов обеих стен
+                        double hitToExistingEnd = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
+                        double hitToCandidateEnd = Math.Min(p.DistanceTo(start), p.DistanceTo(end));
+                        if (hitToExistingEnd < cornerTol && hitToCandidateEnd < cornerTol)
+                        {
+                            // Это "хороший" угол — не обрезаем по нему
+                            continue;
+                        }
+
+                        // Дальше — та же логика, что в TrimCurveAgainstExisting,
+                        // только без повторного вычисления нормали и толщины
+                        XYZ exDir = (exB - exA).Normalize();
+                        XYZ exNormal = new XYZ(-exDir.Y, exDir.X, 0.0);
+
+                        double dHit = (p - exA).DotProduct(exNormal);
+
+                        if (Math.Abs(trimOffsetFeet) < 1e-6)
+                        {
+                            double distStart0 = p.DistanceTo(start);
+                            double distEnd0 = p.DistanceTo(end);
+                            if (distStart0 <= distEnd0)
+                                start = p;
+                            else
+                                end = p;
+                        }
+                        else
+                        {
+                            double target = (dHit >= 0 ? 1.0 : -1.0) * trimOffsetFeet;
+
+                            double distStart = p.DistanceTo(start);
+                            double distEnd = p.DistanceTo(end);
+                            bool moveStart = distStart <= distEnd;
+
+                            XYZ basePt = moveStart ? start : end;
+                            double a0 = (basePt - exA).DotProduct(exNormal);
+                            double denom = dir.DotProduct(exNormal);
+
+                            if (Math.Abs(denom) < 1e-9)
+                            {
+                                if (moveStart)
+                                    start = p;
+                                else
+                                    end = p;
+                            }
+                            else
+                            {
+                                double t = (target - a0) / denom;
+                                XYZ newPt = basePt + dir * t;
+                                if (moveStart)
+                                    start = newPt;
+                                else
+                                    end = newPt;
+                            }
                         }
 
                         if (start.DistanceTo(end) < minLength)
@@ -790,8 +923,8 @@ namespace Revit_AutoExternalWall.Utilities
                     if (trimmed == null)
                         continue;
 
-                    // 2) trim against already created external walls
-                    trimmed = TrimCurveAgainstExisting(trimmed, createdExternalCurves, externalHalfThickness);
+                    // 2) trim against already created external walls (не режем выпуклые углы)
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, externalHalfThickness);
                     if (trimmed == null)
                         continue;
 
@@ -979,7 +1112,7 @@ namespace Revit_AutoExternalWall.Utilities
                 // 2) trim against already created external walls
                 if (existingExternalCurves != null && existingExternalCurves.Count > 0)
                 {
-                    trimmed = TrimCurveAgainstExisting(trimmed, existingExternalCurves, newThickness / 2.0);
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, newThickness / 2.0);
                     if (trimmed == null)
                         return null;
                 }
