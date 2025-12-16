@@ -436,50 +436,26 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Disable wall joins by setting structural usage and preventing automatic joins
+        /// Disable wall joins using the Revit API (at both ends of the wall).
+        /// This is more reliable than trying to tweak parameters like "Allow Join".
         /// </summary>
         private static void DisableWallJoins(Wall wall)
         {
+            if (wall == null)
+                return;
+
             try
             {
-                // Set wall as structural - structural walls typically don't auto-join
-                Parameter structuralParam = wall.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING);
-                if (structuralParam != null && structuralParam.StorageType == StorageType.Integer)
-                {
-                    structuralParam.Set(0); // 0 = Not room bounding, which can help prevent joins
-                }
-
-                // Try to set "Location Line" to prevent joining
-                Parameter locationLineParam = wall.get_Parameter(BuiltInParameter.WALL_KEY_REF_PARAM);
-                if (locationLineParam != null && locationLineParam.StorageType == StorageType.Integer)
-                {
-                    // Set to "Finish Face: Exterior" or similar (value 4 or 5 depending on Revit version)
-                    // This often prevents automatic joining
-                    locationLineParam.Set(4); // Try "Finish Face: Exterior"
-                }
-
-
-
-                // Try multiple possible parameter names for wall join control
-                string[] joinParamNames = new string[] {
-                    "allow join",
-                    "wall join",
-                    "join wall",
-                    "allow wall join",
-                    "wall join allowed"
-                };
-
-                foreach (string paramName in joinParamNames)
-                {
-                    Parameter joinParam = FindParameterByNameContains(wall, paramName);
-                    if (joinParam != null && joinParam.StorageType == StorageType.Integer)
-                    {
-                        joinParam.Set(0); // 0 = False (disable joins)
-                        break; // Found and set, exit loop
-                    }
-                }
+                // Revit API call that explicitly disables joins at each end of the wall.
+                // 0 = start, 1 = end.
+                WallUtils.DisallowWallJoinAtEnd(wall, 0);
+                WallUtils.DisallowWallJoinAtEnd(wall, 1);
             }
-            catch { }
+            catch
+            {
+                // Ignore – if API is not available in a specific Revit version,
+                // wall will behave with default join settings.
+            }
         }
 
         /// <summary>
