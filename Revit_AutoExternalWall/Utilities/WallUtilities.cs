@@ -498,7 +498,7 @@ namespace Revit_AutoExternalWall.Utilities
                     SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
 
                     // Skip if clearly disjoint
-                    if (res == SetComparisonResult.Disjoint || res == SetComparisonResult.Union)
+                    if (res == SetComparisonResult.Disjoint)
                         continue;
 
                     // Collect all intersection points we can find
