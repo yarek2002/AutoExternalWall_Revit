@@ -474,7 +474,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// (existing walls or already created external walls).
         /// Only supports straight line curves. Returns the trimmed curve, or null if it becomes too short.
         /// </summary>
-        private static Curve TrimCurveAgainstExisting(Curve candidate, IEnumerable<Curve> existingCurves, double trimOffsetFeet = 0.2)
+        private static Curve TrimCurveAgainstExisting(Curve candidate, IEnumerable<Curve> existingCurves, double trimOffsetFeet = 0.0)
         {
             if (candidate == null || !(candidate is Line candLine))
                 return candidate;
