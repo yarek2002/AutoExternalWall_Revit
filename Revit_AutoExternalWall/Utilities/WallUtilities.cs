@@ -496,18 +496,43 @@ namespace Revit_AutoExternalWall.Utilities
                 try
                 {
                     SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
-                    if ((res != SetComparisonResult.Overlap && res != SetComparisonResult.Subset && res != SetComparisonResult.Superset) ||
-                        arr == null || arr.IsEmpty)
+
+                    // Skip if clearly disjoint
+                    if (res == SetComparisonResult.Disjoint || res == SetComparisonResult.Union)
                         continue;
 
-                    for (int i = 0; i < arr.Size; i++)
+                    // Collect all intersection points we can find
+                    List<XYZ> hits = new List<XYZ>();
+                    if (arr != null && !arr.IsEmpty)
                     {
-                        XYZ p = arr.get_Item(i)?.XYZPoint;
-                        if (p == null) continue;
+                        for (int i = 0; i < arr.Size; i++)
+                        {
+                            XYZ p = arr.get_Item(i)?.XYZPoint;
+                            if (p != null)
+                                hits.Add(p);
+                        }
+                    }
+
+                    // For colinear overlaps Revit may return empty array; fall back to endpoints of the existing curve
+                    if (hits.Count == 0 && (res == SetComparisonResult.Overlap || res == SetComparisonResult.Subset || res == SetComparisonResult.Superset))
+                    {
+                        for (int i = 0; i < 2; i++)
+                        {
+                            XYZ ep = existing.GetEndPoint(i);
+                            if (ep != null)
+                                hits.Add(ep);
+                        }
+                    }
+
+                    foreach (var p in hits)
+                    {
+                        if (p == null)
+                            continue;
 
                         double distStart = p.DistanceTo(start);
                         double distEnd = p.DistanceTo(end);
 
+                        // Trim the nearer end away from the intersection point
                         if (distStart <= distEnd)
                             start = p + (dir * trimOffsetFeet);
                         else
