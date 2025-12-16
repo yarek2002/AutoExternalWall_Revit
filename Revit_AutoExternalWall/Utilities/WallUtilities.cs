@@ -117,8 +117,7 @@ namespace Revit_AutoExternalWall.Utilities
                     if (trimmedCurve == null)
                         continue;
 
-                    // 2) Trim against already created external walls (stop at их внешней грани, но не резать выпуклые углы)
-                    trimmedCurve = TrimCurveAgainstExternalCurves(trimmedCurve, createdExternalCurves, externalHalfThickness);
+                    // 2) Пока не подрезаем по уже созданным внешним стенам, чтобы выпуклые углы сходились в вершине
                     if (trimmedCurve == null)
                         continue;
 
@@ -924,8 +923,7 @@ namespace Revit_AutoExternalWall.Utilities
                     if (trimmed == null)
                         continue;
 
-                    // 2) trim against already created external walls (не режем выпуклые углы)
-                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, externalHalfThickness);
+                    // 2) пока не подрезаем по уже созданным внешним стенам, чтобы выпуклые углы сходились в вершине
                     if (trimmed == null)
                         continue;
 
@@ -1110,13 +1108,7 @@ namespace Revit_AutoExternalWall.Utilities
                 if (trimmed == null)
                     return null;
 
-                // 2) trim against already created external walls
-                if (existingExternalCurves != null && existingExternalCurves.Count > 0)
-                {
-                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, newThickness / 2.0);
-                    if (trimmed == null)
-                        return null;
-                }
+                // 2) пока не подрезаем по уже созданным внешним стенам, чтобы выпуклые углы сходились в вершине
                 if (trimmed == null)
                     return null;
 
