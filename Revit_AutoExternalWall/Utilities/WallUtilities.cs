@@ -491,43 +491,38 @@ namespace Revit_AutoExternalWall.Utilities
 
             foreach (Curve existing in existingCurves)
             {
-                if (existing == null)
-                    continue;
+                if (existing == null) continue;
 
                 try
                 {
                     SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
-                    if (res != SetComparisonResult.Overlap || arr == null || arr.IsEmpty)
+                    if ((res != SetComparisonResult.Overlap && res != SetComparisonResult.Subset && res != SetComparisonResult.Superset) ||
+                        arr == null || arr.IsEmpty)
                         continue;
 
-                    IntersectionResult ir = arr.get_Item(0);
-                    XYZ p = ir?.XYZPoint;
-                    if (p == null)
-                        continue;
-
-                    double distStart = p.DistanceTo(start);
-                    double distEnd = p.DistanceTo(end);
-
-                    // Trim the endpoint that is closer to the intersection so the new wall
-                    // stops before the crossing point.
-                    if (distStart <= distEnd)
+                    for (int i = 0; i < arr.Size; i++)
                     {
-                        start = p + (dir * trimOffsetFeet);
-                    }
-                    else
-                    {
-                        end = p - (dir * trimOffsetFeet);
-                    }
+                        XYZ p = arr.get_Item(i)?.XYZPoint;
+                        if (p == null) continue;
 
-                    if (start.DistanceTo(end) < minLength)
-                        return null;
+                        double distStart = p.DistanceTo(start);
+                        double distEnd = p.DistanceTo(end);
 
-                    candLine = Line.CreateBound(start, end);
-                    dir = (end - start).Normalize();
+                        if (distStart <= distEnd)
+                            start = p + (dir * trimOffsetFeet);
+                        else
+                            end = p - (dir * trimOffsetFeet);
+
+                        if (start.DistanceTo(end) < minLength)
+                            return null;
+
+                        candLine = Line.CreateBound(start, end);
+                        dir = (end - start).Normalize();
+                    }
                 }
                 catch
                 {
-                    // Ignore individual intersection failures and keep the current curve
+                    // ignore and continue
                 }
             }
 
