@@ -774,9 +774,7 @@ namespace Revit_AutoExternalWall.Utilities
 
             int created = 0;
             List<Curve> createdExternalCurves = new List<Curve>();
-            // Для режима "по помещениям" не подрезаем по существующим стенам,
-            // только предотвращаем пересечения между новыми внешними стенами.
-            List<Curve> existingWallCurves = null;
+            List<Curve> existingWallCurves = GetExistingWallCurves(doc);
 
             try
             {
@@ -1202,6 +1200,8 @@ namespace Revit_AutoExternalWall.Utilities
                 XYZ wallEnd = wallLine.GetEndPoint(1);
                 XYZ dir = (wallEnd - wallStart).Normalize();
                 double wallLength = wallStart.DistanceTo(wallEnd);
+                // Насколько "вытащить" сегменты к внешним углам: ширина граничной стены
+                double extendBy = GetWallThickness(wall);
 
                 // Find the encompassing min and max from segmentDatas
                 double minT = double.MaxValue;
@@ -1233,6 +1233,18 @@ namespace Revit_AutoExternalWall.Utilities
                 {
                     double startT = splitPoints[i];
                     double endT = splitPoints[i + 1];
+
+                    // Для крайних сегментов вытягиваем их к внешним углам здания,
+                    // чтобы внешняя стена доходила до реального конца стены,
+                    // а не обрывалась на границе помещения.
+                    if (i == 0)
+                    {
+                        startT = Math.Max(0.0, startT - extendBy);
+                    }
+                    if (i == splitPoints.Count - 2)
+                    {
+                        endT = Math.Min(wallLength, endT + extendBy);
+                    }
 
                     if (endT > startT + 0.01) // Ignore very small segments
                     {
