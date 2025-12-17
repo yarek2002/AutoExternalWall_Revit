@@ -90,13 +90,16 @@ namespace Revit_AutoExternalWall
                     // Create walls based on selected walls only if no rooms were selected
                     if (selectedRooms == null || selectedRooms.Count == 0)
                     {
-                        try
+                        foreach (Wall wall in selectedWalls)
                         {
-                            wallsCreated += WallUtilities.CreateExternalWallsFromWalls(doc, selectedWalls, externalWallType);
-                        }
-                        catch (Exception ex)
-                        {
-                            message += $"Error processing walls: {ex.Message}\n";
+                            try
+                            {
+                                wallsCreated += WallUtilities.CreateExternalWall(doc, wall, externalWallType);
+                            }
+                            catch (Exception ex)
+                            {
+                                message += $"Error processing wall: {ex.Message}\n";
+                            }
                         }
                     }
 
