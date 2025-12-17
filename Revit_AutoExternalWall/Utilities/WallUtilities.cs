@@ -511,7 +511,7 @@ namespace Revit_AutoExternalWall.Utilities
                             if (ep != null)
                                 hits.Add(ep);
                         }
-                    }
+                }
 
                     // Precompute data for existing line in XY
                     if (!(existing is Line exLine))
@@ -908,7 +908,7 @@ namespace Revit_AutoExternalWall.Utilities
                         continue;
 
                     // 2) trim against already created external walls (не режем выпуклые углы)
-                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, externalHalfThickness);
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, 0.0);
                     if (trimmed == null)
                         continue;
 
@@ -1096,7 +1096,7 @@ namespace Revit_AutoExternalWall.Utilities
                 // 2) trim against already created external walls
                 if (existingExternalCurves != null && existingExternalCurves.Count > 0)
                 {
-                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, newThickness / 2.0);
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, 0.0);
                     if (trimmed == null)
                         return null;
                 }
