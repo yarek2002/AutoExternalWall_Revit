@@ -599,11 +599,46 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Trim a candidate wall curve against already created external walls.
-        /// То же, что TrimCurveAgainstExisting, но:
-        /// - если пересечение попадает прямо в торец новой или существующей внешней стены (выпуклый угол),
-        ///   не обрезаем, чтобы стены сходились в вершине;
-        /// - иначе обрезаем по внешней грани (на offset половины толщины).
+        /// Попытка пересечь две бесконечные прямые (оси стен) в плоскости XY.
+        /// </summary>
+        private static bool TryIntersectLinesXY(Line a, Line b, out XYZ intersection)
+        {
+            intersection = null;
+            if (a == null || b == null) return false;
+
+            XYZ p1 = a.GetEndPoint(0);
+            XYZ p2 = a.GetEndPoint(1);
+            XYZ p3 = b.GetEndPoint(0);
+            XYZ p4 = b.GetEndPoint(1);
+
+            double x1 = p1.X, y1 = p1.Y;
+            double x2 = p2.X, y2 = p2.Y;
+            double x3 = p3.X, y3 = p3.Y;
+            double x4 = p4.X, y4 = p4.Y;
+
+            double dx1 = x2 - x1;
+            double dy1 = y2 - y1;
+            double dx2 = x4 - x3;
+            double dy2 = y4 - y3;
+
+            double denom = dx1 * dy2 - dy1 * dx2;
+            if (Math.Abs(denom) < 1e-9)
+                return false; // почти параллельные
+
+            double t = ((x3 - x1) * dy2 - (y3 - y1) * dx2) / denom;
+
+            double ix = x1 + t * dx1;
+            double iy = y1 + t * dy1;
+            double iz = p1.Z;
+
+            intersection = new XYZ(ix, iy, iz);
+            return true;
+        }
+
+        /// <summary>
+        /// Подрезка/удлинение новой внешней стены по уже созданным внешним стенам.
+        /// Ведём осевую линию до пересечения с осью другой внешней стены и
+        /// останавливаем/обрезаем в точке пересечения, чтобы угол был закрыт.
         /// </summary>
         private static Curve TrimCurveAgainstExternalCurves(Curve candidate, IEnumerable<Curve> externalCurves, double trimOffsetFeet = 0.0)
         {
@@ -613,8 +648,7 @@ namespace Revit_AutoExternalWall.Utilities
             if (externalCurves == null)
                 return candidate;
 
-            const double minLength = 0.5;     // ~150 mm
-            const double endTol = 1e-4;       // ~0.03 mm, считать точку торцем
+            const double minLength = 0.5; // ~150 mm
 
             XYZ start = candLine.GetEndPoint(0);
             XYZ end = candLine.GetEndPoint(1);
@@ -622,106 +656,28 @@ namespace Revit_AutoExternalWall.Utilities
 
             foreach (Curve existing in externalCurves)
             {
-                if (existing == null) continue;
+                if (!(existing is Line exLine))
+                    continue;
 
                 try
                 {
-                    SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
-                    if (res == SetComparisonResult.Disjoint)
+                    if (!TryIntersectLinesXY(candLine, exLine, out XYZ p))
                         continue;
 
-                    List<XYZ> hits = new List<XYZ>();
-                    if (arr != null && !arr.IsEmpty)
-                    {
-                        for (int i = 0; i < arr.Size; i++)
-                        {
-                            XYZ p = arr.get_Item(i)?.XYZPoint;
-                            if (p != null)
-                                hits.Add(p);
-                        }
-                    }
+                    double distStart = p.DistanceTo(start);
+                    double distEnd = p.DistanceTo(end);
+                    bool moveStart = distStart <= distEnd;
 
-                    if (hits.Count == 0 && (res == SetComparisonResult.Overlap || res == SetComparisonResult.Subset || res == SetComparisonResult.Superset))
-                    {
-                        for (int i = 0; i < 2; i++)
-                        {
-                            XYZ ep = existing.GetEndPoint(i);
-                            if (ep != null)
-                                hits.Add(ep);
-                        }
-                    }
+                    if (moveStart)
+                        start = p;
+                    else
+                        end = p;
 
-                    if (!(existing is Line exLine))
-                        continue;
+                    if (start.DistanceTo(end) < minLength)
+                        return null;
 
-                    XYZ exA = exLine.GetEndPoint(0);
-                    XYZ exB = exLine.GetEndPoint(1);
-
-                    foreach (var p in hits)
-                    {
-                        if (p == null)
-                            continue;
-
-                        // Если пересечение совпадает с торцом новой или существующей внешней стены — выпуклый угол, не режем
-                        double hitToExistingEnd = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
-                        double hitToCandidateEnd = Math.Min(p.DistanceTo(start), p.DistanceTo(end));
-                        if (hitToExistingEnd < endTol || hitToCandidateEnd < endTol)
-                        {
-                            continue;
-                        }
-
-                        // Дальше — та же логика, что в TrimCurveAgainstExisting,
-                        // только без повторного вычисления нормали и толщины
-                        XYZ exDir = (exB - exA).Normalize();
-                        XYZ exNormal = new XYZ(-exDir.Y, exDir.X, 0.0);
-
-                        double dHit = (p - exA).DotProduct(exNormal);
-
-                        if (Math.Abs(trimOffsetFeet) < 1e-6)
-                        {
-                            double distStart0 = p.DistanceTo(start);
-                            double distEnd0 = p.DistanceTo(end);
-                            if (distStart0 <= distEnd0)
-                                start = p;
-                            else
-                                end = p;
-                        }
-                        else
-                        {
-                            double target = (dHit >= 0 ? 1.0 : -1.0) * trimOffsetFeet;
-
-                            double distStart = p.DistanceTo(start);
-                            double distEnd = p.DistanceTo(end);
-                            bool moveStart = distStart <= distEnd;
-
-                            XYZ basePt = moveStart ? start : end;
-                            double a0 = (basePt - exA).DotProduct(exNormal);
-                            double denom = dir.DotProduct(exNormal);
-
-                            if (Math.Abs(denom) < 1e-9)
-                            {
-                                if (moveStart)
-                                    start = p;
-                                else
-                                    end = p;
-                            }
-                            else
-                            {
-                                double t = (target - a0) / denom;
-                                XYZ newPt = basePt + dir * t;
-                                if (moveStart)
-                                    start = newPt;
-                                else
-                                    end = newPt;
-                            }
-                        }
-
-                        if (start.DistanceTo(end) < minLength)
-                            return null;
-
-                        candLine = Line.CreateBound(start, end);
-                        dir = (end - start).Normalize();
-                    }
+                    candLine = Line.CreateBound(start, end);
+                    dir = (end - start).Normalize();
                 }
                 catch
                 {
