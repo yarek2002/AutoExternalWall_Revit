@@ -20,6 +20,15 @@ namespace Revit_AutoExternalWall.Utilities
     /// </summary>
     public static class WallUtilities
     {
+        /// <summary>
+        /// Helper to store wall with its straight location curve.
+        /// Используется для корректной подрезки в углах с учётом толщины обеих стен.
+        /// </summary>
+        private class WallCurveInfo
+        {
+            public Wall Wall { get; set; }
+            public Curve Curve { get; set; }
+        }
                       /// <summary>
         /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
         /// </summary>
@@ -459,39 +468,37 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Trim a candidate wall curve so it does not intersect provided curves
-        /// (intended for existing walls).
-        /// Only supports straight line curves. Returns the trimmed curve, or null if it becomes too short.
+        /// <summary>
+        /// Trim a candidate wall curve so it does not intersect provided walls.
+        /// Использует толщину нашей и соседней стены в узле, чтобы дотягивать сегмент до внешнего угла.
         /// </summary>
-        private static Curve TrimCurveAgainstExisting(Curve candidate, IEnumerable<Curve> existingCurves, double trimOffsetFeet = 0.0)
+        private static Curve TrimCurveAgainstExisting(Curve candidate, IEnumerable<WallCurveInfo> existingWalls, double primaryHalfThickness)
         {
             if (candidate == null || !(candidate is Line candLine))
                 return candidate;
 
-            if (existingCurves == null)
+            if (existingWalls == null)
                 return candidate;
 
-            // Minimum usable length after trimming (in feet)
-            const double minLength = 0.5; // ~150 mm
+            const double minLength = 0.5; // ~150 мм
+            const double endTol = 1e-4;   // узел в торце
 
             XYZ start = candLine.GetEndPoint(0);
             XYZ end = candLine.GetEndPoint(1);
             XYZ dir = (end - start).Normalize();
 
-            foreach (Curve existing in existingCurves)
+            foreach (WallCurveInfo info in existingWalls)
             {
-                if (existing == null) continue;
+                if (!(info?.Curve is Line existing))
+                    continue;
 
                 try
                 {
                     SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
-
-                    // Skip if clearly disjoint
                     if (res == SetComparisonResult.Disjoint)
                         continue;
 
-                    // Collect all intersection points we can find
-                    List<XYZ> hits = new List<XYZ>();
+                    var hits = new List<XYZ>();
                     if (arr != null && !arr.IsEmpty)
                     {
                         for (int i = 0; i < arr.Size; i++)
@@ -502,25 +509,17 @@ namespace Revit_AutoExternalWall.Utilities
                         }
                     }
 
-                    // For colinear overlaps Revit may return empty array; fall back to endpoints of the existing curve
-                    if (hits.Count == 0 && (res == SetComparisonResult.Overlap || res == SetComparisonResult.Subset || res == SetComparisonResult.Superset))
+                    if (hits.Count == 0 && (res == SetComparisonResult.Overlap ||
+                                            res == SetComparisonResult.Subset ||
+                                            res == SetComparisonResult.Superset))
                     {
-                        for (int i = 0; i < 2; i++)
-                        {
-                            XYZ ep = existing.GetEndPoint(i);
-                            if (ep != null)
-                                hits.Add(ep);
-                        }
-                }
+                        hits.Add(existing.GetEndPoint(0));
+                        hits.Add(existing.GetEndPoint(1));
+                    }
 
-                    // Precompute data for existing line in XY
-                    if (!(existing is Line exLine))
-                        continue;
-
-                    XYZ exA = exLine.GetEndPoint(0);
-                    XYZ exB = exLine.GetEndPoint(1);
+                    XYZ exA = existing.GetEndPoint(0);
+                    XYZ exB = existing.GetEndPoint(1);
                     XYZ exDir = (exB - exA).Normalize();
-                    // Normal in XY plane (perpendicular to existing wall axis)
                     XYZ exNormal = new XYZ(-exDir.Y, exDir.X, 0.0);
 
                     foreach (var p in hits)
@@ -528,81 +527,59 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
-                        // Signed distance from intersection to existing wall center line along its normal
+                        // Ищем вторую стену, которая тоже приходит в этот узел
+                        double otherHalf = 0.0;
+                        foreach (var other in existingWalls)
+                        {
+                            if (other == info) continue;
+                            if (!(other.Curve is Line otherLine)) continue;
+
+                            XYZ oa = otherLine.GetEndPoint(0);
+                            XYZ ob = otherLine.GetEndPoint(1);
+                            if (p.DistanceTo(oa) < endTol || p.DistanceTo(ob) < endTol)
+                            {
+                                double th = GetWallThickness(other.Wall) / 2.0;
+                                if (th > otherHalf) otherHalf = th;
+                            }
+                        }
+
+                        double totalHalf = primaryHalfThickness + otherHalf;
+
+                        if (totalHalf < 1e-6)
+                        {
+                            // нет данных по толщинам – режем по точке пересечения
+                            double d0 = p.DistanceTo(start);
+                            double d1 = p.DistanceTo(end);
+                            if (d0 <= d1) start = p; else end = p;
+
+                            if (start.DistanceTo(end) < minLength)
+                                return null;
+
+                            candLine = Line.CreateBound(start, end);
+                            dir = (end - start).Normalize();
+                            continue;
+                        }
+
                         double dHit = (p - exA).DotProduct(exNormal);
+                        double target = (dHit >= 0 ? 1.0 : -1.0) * totalHalf;
 
-                        // If no trim offset (half-thickness) is provided, just cut at intersection
-                        if (Math.Abs(trimOffsetFeet) < 1e-6)
-                        {
-                            double distStart0 = p.DistanceTo(start);
-                            double distEnd0 = p.DistanceTo(end);
-                            if (distStart0 <= distEnd0)
-                                start = p;
-                            else
-                                end = p;
-
-                            if (start.DistanceTo(end) < minLength)
-                                return null;
-
-                            candLine = Line.CreateBound(start, end);
-                            dir = (end - start).Normalize();
-                            continue;
-                        }
-
-                        // Если пересечение попадает в торец существующей стены – это узел угла,
-                        // в этом случае режем ровно по точке пересечения, без смещения на halfThickness.
-                        double distToExEnds = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
-                        const double cornerEndTol = 1e-4; // ~0.03 мм
-
-                        if (distToExEnds < cornerEndTol || Math.Abs(trimOffsetFeet) < 1e-6)
-                        {
-                            double distStart0 = p.DistanceTo(start);
-                            double distEnd0 = p.DistanceTo(end);
-                            if (distStart0 <= distEnd0)
-                                start = p;
-                            else
-                                end = p;
-
-                            if (start.DistanceTo(end) < minLength)
-                                return null;
-
-                            candLine = Line.CreateBound(start, end);
-                            dir = (end - start).Normalize();
-                            continue;
-                        }
-
-                        // Во всех остальных случаях – сдвиг до внешней грани стены (center +/- halfThickness)
-                        double target = (dHit >= 0 ? 1.0 : -1.0) * trimOffsetFeet;
-
-                        // Decide which end to move (closer to intersection along the candidate)
                         double distStart = p.DistanceTo(start);
                         double distEnd = p.DistanceTo(end);
                         bool moveStart = distStart <= distEnd;
 
                         XYZ basePt = moveStart ? start : end;
-
-                        // Signed distance of base point to existing wall center line
                         double a0 = (basePt - exA).DotProduct(exNormal);
                         double denom = dir.DotProduct(exNormal);
 
                         if (Math.Abs(denom) < 1e-9)
                         {
-                            // Candidate is nearly parallel to existing wall; fall back to cutting at intersection
-                            if (moveStart)
-                                start = p;
-                            else
-                                end = p;
+                            if (moveStart) start = p; else end = p;
                         }
                         else
                         {
-                            // Solve for t along candidate direction so that new point has distance "target" to existing wall center line
                             double t = (target - a0) / denom;
                             XYZ newPt = basePt + dir * t;
-
-                            if (moveStart)
-                                start = newPt;
-                            else
-                                end = newPt;
+                            if (moveStart) start = newPt; else end = newPt;
                         }
 
                         if (start.DistanceTo(end) < minLength)
@@ -759,9 +736,9 @@ namespace Revit_AutoExternalWall.Utilities
         /// Collect straight location curves from existing walls in the document,
         /// optionally excluding a specific wall (e.g., the source wall).
         /// </summary>
-        private static List<Curve> GetExistingWallCurves(Document doc, Wall excludeWall = null)
+        private static List<WallCurveInfo> GetExistingWallCurves(Document doc, Wall excludeWall = null)
         {
-            var curves = new List<Curve>();
+            var infos = new List<WallCurveInfo>();
             try
             {
                 var walls = new FilteredElementCollector(doc)
@@ -775,13 +752,17 @@ namespace Revit_AutoExternalWall.Utilities
 
                     if (w.Location is LocationCurve lc && lc.Curve is Line line)
                     {
-                        curves.Add(line);
+                        infos.Add(new WallCurveInfo
+                        {
+                            Wall = w,
+                            Curve = line
+                        });
                     }
                 }
             }
             catch { }
 
-            return curves;
+            return infos;
         }
 
         /// <summary>
@@ -796,7 +777,7 @@ namespace Revit_AutoExternalWall.Utilities
 
             int created = 0;
             List<Curve> createdExternalCurves = new List<Curve>();
-            List<Curve> existingWallCurves = GetExistingWallCurves(doc);
+            List<WallCurveInfo> existingWallCurves = GetExistingWallCurves(doc);
 
             try
             {
@@ -915,7 +896,7 @@ namespace Revit_AutoExternalWall.Utilities
                 List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
                 int created = 0;
                 List<Curve> createdExternalCurves = new List<Curve>();
-                List<Curve> existingWallCurves = GetExistingWallCurves(doc, innerWall);
+                List<WallCurveInfo> existingWallCurves = GetExistingWallCurves(doc, innerWall);
                 double existingHalfThickness = GetWallThickness(innerWall) / 2.0;
                 double externalHalfThickness = GetWallTypeThickness(wallType) / 2.0;
 
@@ -1086,7 +1067,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// Create a single external wall along the curve.
         /// Returns the created Wall or null if failed.
         /// </summary>
-        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType, List<Curve> existingExternalCurves = null, List<Curve> existingWallCurves = null)
+        private static Wall CreateExternalWallAlongCurveSingle(Document doc, Wall innerWall, Curve innerCurve, WallType wallType, List<Curve> existingExternalCurves = null, List<WallCurveInfo> existingWallCurves = null)
         {
             if (doc == null || innerWall == null || innerCurve == null || wallType == null)
                 return null;
@@ -1111,7 +1092,7 @@ namespace Revit_AutoExternalWall.Utilities
                 Curve offsetCurve = offsetCurves[0];
                 Curve reversed = offsetCurve.CreateReversed();
                 // 1) trim against existing walls
-                List<Curve> existingWalls = existingWallCurves ?? new List<Curve>();
+                List<WallCurveInfo> existingWalls = existingWallCurves ?? GetExistingWallCurves(doc, innerWall);
                 Curve trimmed = TrimCurveAgainstExisting(reversed, existingWalls, existingThickness / 2.0);
                 if (trimmed == null)
                     return null;
