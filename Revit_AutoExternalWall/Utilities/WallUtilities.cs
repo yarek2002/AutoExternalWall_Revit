@@ -908,7 +908,8 @@ namespace Revit_AutoExternalWall.Utilities
                         continue;
 
                     // 2) trim against already created external walls (не режем выпуклые углы)
-                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, externalHalfThickness);
+                    // На внешних углах не укорачиваем по толщине новой стены — тянем до угла
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, 0.0);
                     if (trimmed == null)
                         continue;
 
