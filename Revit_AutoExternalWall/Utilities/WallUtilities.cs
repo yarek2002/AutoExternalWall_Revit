@@ -780,6 +780,177 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Create external walls for selected walls, extending them to external corners.
+        /// Returns number of created walls.
+        /// </summary>
+        public static int CreateExternalWallsFromWalls(Document doc, List<Wall> selectedWalls, WallType wallType)
+        {
+            if (doc == null || selectedWalls == null || selectedWalls.Count == 0 || wallType == null)
+                return 0;
+
+            int created = 0;
+            List<Curve> createdExternalCurves = new List<Curve>();
+            List<Curve> existingWallCurves = GetExistingWallCurves(doc);
+
+            try
+            {
+                // Get inner curves and compute offset curves
+                var innerCurves = new List<Curve>();
+                var offsetCurves = new List<Curve>();
+                var wallNormals = new List<XYZ>();
+                var walls = new List<Wall>();
+
+                foreach (Wall wall in selectedWalls)
+                {
+                    LocationCurve loc = wall.Location as LocationCurve;
+                    if (loc == null || loc.Curve == null) continue;
+
+                    Curve innerCurve = loc.Curve;
+                    double totalOffset = ComputeCenterOffset(wall, wallType, 0.0);
+                    XYZ normal = GetWallFaceNormal(wall);
+
+                    List<Curve> offs = GeometryUtilities.OffsetCurve(innerCurve, totalOffset, normal);
+                    if (offs.Count == 0 || offs[0] == null) continue;
+
+                    Curve offsetCurve = offs[0].CreateReversed();
+
+                    innerCurves.Add(innerCurve);
+                    offsetCurves.Add(offsetCurve);
+                    wallNormals.Add(normal);
+                    walls.Add(wall);
+                }
+
+                // Extend offset curves to external intersections
+                var extendedOffsetCurves = new List<Curve>(offsetCurves);
+                for (int i = 0; i < innerCurves.Count; i++)
+                {
+                    for (int j = i + 1; j < innerCurves.Count; j++)
+                    {
+                        if (AreCurvesAdjacent(innerCurves[i], innerCurves[j]))
+                        {
+                            // Adjacent, extend to intersection
+                            XYZ intersect = LineIntersection(offsetCurves[i] as Line, offsetCurves[j] as Line);
+                            if (intersect != null)
+                            {
+                                // Extend offsetCurves[i] to intersect
+                                extendedOffsetCurves[i] = ExtendCurveToPoint(offsetCurves[i], intersect);
+                                // Extend offsetCurves[j] to intersect
+                                extendedOffsetCurves[j] = ExtendCurveToPoint(offsetCurves[j], intersect);
+                            }
+                        }
+                    }
+                }
+
+                // Now trim and create
+                for (int i = 0; i < walls.Count; i++)
+                {
+                    Wall wall = walls[i];
+                    Curve trimmed = extendedOffsetCurves[i];
+
+                    // Trim against existing walls
+                    trimmed = TrimCurveAgainstExisting(trimmed, existingWallCurves, GetWallThickness(wall) / 2.0);
+                    if (trimmed == null) continue;
+
+                    // Trim against already created external walls
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, createdExternalCurves, GetWallTypeThickness(wallType) / 2.0);
+                    if (trimmed == null) continue;
+
+                    // Create wall
+                    Level level = GetWallLevel(wall);
+                    double height = GetWallHeight(wall);
+                    if (level == null) continue;
+
+                    Wall externalWall = Wall.Create(doc, trimmed, wallType.Id, level.Id, height, 0.0, false, false);
+                    if (externalWall != null)
+                    {
+                        DisableWallJoins(externalWall);
+                        CopyWallProperties(wall, externalWall);
+                        createdExternalCurves.Add(trimmed);
+                        created++;
+                    }
+                }
+            }
+            catch { }
+
+            return created;
+        }
+
+        /// <summary>
+        /// Check if two curves are adjacent (ends meet within tolerance)
+        /// </summary>
+        private static bool AreCurvesAdjacent(Curve c1, Curve c2, double tol = 1e-3)
+        {
+            if (c1 == null || c2 == null) return false;
+
+            XYZ c1start = c1.GetEndPoint(0);
+            XYZ c1end = c1.GetEndPoint(1);
+            XYZ c2start = c2.GetEndPoint(0);
+            XYZ c2end = c2.GetEndPoint(1);
+
+            return c1start.DistanceTo(c2start) < tol || c1start.DistanceTo(c2end) < tol ||
+                   c1end.DistanceTo(c2start) < tol || c1end.DistanceTo(c2end) < tol;
+        }
+
+        /// <summary>
+        /// Find intersection point of two lines
+        /// </summary>
+        private static XYZ LineIntersection(Line l1, Line l2)
+        {
+            if (l1 == null || l2 == null) return null;
+
+            try
+            {
+                XYZ p1 = l1.GetEndPoint(0);
+                XYZ d1 = (l1.GetEndPoint(1) - p1).Normalize();
+                XYZ p2 = l2.GetEndPoint(0);
+                XYZ d2 = (l2.GetEndPoint(1) - p2).Normalize();
+
+                XYZ diff = p2 - p1;
+                double denom = d1.X * d2.Y - d1.Y * d2.X;
+                if (Math.Abs(denom) < 1e-6) return null; // parallel
+
+                double t = (diff.X * d2.Y - diff.Y * d2.X) / denom;
+                return p1 + t * d1;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Extend a line curve to include the given point
+        /// </summary>
+        private static Curve ExtendCurveToPoint(Curve curve, XYZ point)
+        {
+            if (curve == null || !(curve is Line line) || point == null) return curve;
+
+            try
+            {
+                XYZ start = line.GetEndPoint(0);
+                XYZ end = line.GetEndPoint(1);
+                XYZ dir = (end - start).Normalize();
+
+                // Project point onto the line
+                double proj = (point - start).DotProduct(dir);
+                XYZ newEnd = start + proj * dir;
+
+                // Determine which end to extend
+                double distToStart = point.DistanceTo(start);
+                double distToEnd = point.DistanceTo(end);
+
+                if (distToStart < distToEnd)
+                {
+                    // Extend start
+                    return Line.CreateBound(point, end);
+                }
+                else
+                {
+                    // Extend end
+                    return Line.CreateBound(start, point);
+                }
+            }
+            catch { return curve; }
+        }
+
+        /// <summary>
         /// Create external walls for boundary segments of selected rooms that are adjacent to selected walls.
         /// Creates complete walls covering all room boundaries, then splits them at midpoints between rooms.
         /// Returns number of created wall segments after splitting.
