@@ -774,6 +774,9 @@ namespace Revit_AutoExternalWall.Utilities
 
             int created = 0;
             List<Curve> createdExternalCurves = new List<Curve>();
+            // Для режима "по помещениям" не подрезаем по существующим стенам,
+            // только предотвращаем пересечения между новыми внешними стенами.
+            List<Curve> existingWallCurves = null;
 
             try
             {
@@ -854,12 +857,10 @@ namespace Revit_AutoExternalWall.Utilities
                     // Get curve segments based on split points
                     List<Curve> wallSegments = GetWallSegments(innerWall, segmentDatas, splitParams);
 
-                    // Create external walls for each segment.
-                    // Для режима "по помещениям" не подрезаем по существующим стенам,
-                    // только предотвращаем пересечения между новыми внешними стенами.
+                    // Create external walls for each segment
                     foreach (Curve segment in wallSegments)
                     {
-                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves, null);
+                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves, existingWallCurves);
                         if (externalWall != null)
                         {
                             created++;
