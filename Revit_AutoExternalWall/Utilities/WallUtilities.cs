@@ -549,7 +549,29 @@ namespace Revit_AutoExternalWall.Utilities
                             continue;
                         }
 
-                        // Target signed distance: move endpoint so candidate ends at wall face (center +/- half-thickness)
+                        // Если пересечение попадает в торец существующей стены – это узел угла,
+                        // в этом случае режем ровно по точке пересечения, без смещения на halfThickness.
+                        double distToExEnds = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
+                        const double cornerEndTol = 1e-4; // ~0.03 мм
+
+                        if (distToExEnds < cornerEndTol || Math.Abs(trimOffsetFeet) < 1e-6)
+                        {
+                            double distStart0 = p.DistanceTo(start);
+                            double distEnd0 = p.DistanceTo(end);
+                            if (distStart0 <= distEnd0)
+                                start = p;
+                            else
+                                end = p;
+
+                            if (start.DistanceTo(end) < minLength)
+                                return null;
+
+                            candLine = Line.CreateBound(start, end);
+                            dir = (end - start).Normalize();
+                            continue;
+                        }
+
+                        // Во всех остальных случаях – сдвиг до внешней грани стены (center +/- halfThickness)
                         double target = (dHit >= 0 ? 1.0 : -1.0) * trimOffsetFeet;
 
                         // Decide which end to move (closer to intersection along the candidate)
