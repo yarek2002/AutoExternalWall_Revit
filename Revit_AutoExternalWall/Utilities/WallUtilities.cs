@@ -29,8 +29,9 @@ namespace Revit_AutoExternalWall.Utilities
             public Wall Wall { get; set; }
             public Curve Curve { get; set; }
         }
-                      /// <summary>
-        /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
+
+        /// <summary>
+        /// Get a suitable external wall type from document (Basic Wall only, not Curtain Wall or Stacked Wall)
         /// </summary>
         public static WallType GetExternalWallType(Document doc)
         {
@@ -467,7 +468,6 @@ namespace Revit_AutoExternalWall.Utilities
             }
         }
 
-        /// <summary>
         /// <summary>
         /// Trim a candidate wall curve so it does not intersect provided walls.
         /// Использует толщину нашей и соседней стены в узле, чтобы дотягивать сегмент до внешнего угла.
@@ -1182,8 +1182,6 @@ namespace Revit_AutoExternalWall.Utilities
             catch { return result; }
         }
 
-
-
         /// <summary>
         /// Get wall curve segments based on split points along the encompassing curve.
         /// </summary>
@@ -1263,5 +1261,402 @@ namespace Revit_AutoExternalWall.Utilities
             }
             catch { return result; }
         }
+
+        #region Geometry-Based Corner Detection Methods
+
+        /// <summary>
+        /// Get exterior face references for a wall using HostObjectUtils
+        /// </summary>
+        /// <param name="wall">The wall to get exterior faces for</param>
+        /// <returns>List of references to exterior faces</returns>
+        public static List<Reference> GetExteriorFaceReferences(Wall wall)
+        {
+            var exteriorFaces = new List<Reference>();
+            
+            try
+            {
+                if (wall == null)
+                    return exteriorFaces;
+
+                // Get side faces (exterior and interior)
+                IList<Reference> sideFaces = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+                
+                if (sideFaces != null)
+                {
+                    exteriorFaces.AddRange(sideFaces);
+                }
+            }
+            catch
+            {
+                // Return empty list if failed
+            }
+
+            return exteriorFaces;
+        }
+
+        /// <summary>
+        /// Get Face object from a reference
+        /// </summary>
+        /// <param name="doc">The document</param>
+        /// <param name="reference">The reference to get face from</param>
+        /// <returns>Face object or null if failed</returns>
+        public static Face GetFaceFromReference(Document doc, Reference reference)
+        {
+            try
+            {
+                if (doc == null || reference == null)
+                    return null;
+
+                return doc.GetElement(reference).GetGeometryObjectFromReference(reference) as Face;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get wall edge endpoints from exterior face geometry
+        /// </summary>
+        /// <param name="wall">The wall to analyze</param>
+        /// <returns>List of edge endpoints (start and end points)</returns>
+        public static List<XYZ> GetWallEdgeEndpoints(Wall wall)
+        {
+            var endpoints = new List<XYZ>();
+            
+            try
+            {
+                if (wall == null)
+                    return endpoints;
+
+                // Get exterior face references
+                var exteriorFaceRefs = GetExteriorFaceReferences(wall);
+                
+                foreach (var faceRef in exteriorFaceRefs)
+                {
+                    var face = GetFaceFromReference(wall.Document, faceRef);
+                    if (face == null)
+                        continue;
+
+                    // For flat walls, convert to PlanarFace
+                    if (face is PlanarFace planarFace)
+                    {
+                        // Extract edges from EdgeLoops
+                        foreach (EdgeLoop edgeLoop in planarFace.EdgeLoops)
+                        {
+                            foreach (Edge edge in edgeLoop)
+                            {
+                                // Get edge curve and endpoints
+                                Curve edgeCurve = edge.AsCurve();
+                                if (edgeCurve != null)
+                                {
+                                    XYZ startPoint = edgeCurve.GetEndPoint(0);
+                                    XYZ endPoint = edgeCurve.GetEndPoint(1);
+                                    
+                                    // Add endpoints if not already present (with tolerance)
+                                    if (!endpoints.Any(p => p.IsAlmostEqualTo(startPoint)))
+                                        endpoints.Add(startPoint);
+                                        
+                                    if (!endpoints.Any(p => p.IsAlmostEqualTo(endPoint)))
+                                        endpoints.Add(endPoint);
+                                }
+                            }
+                        }
+                        break; // We typically only need one exterior face
+                    }
+                }
+            }
+            catch
+            {
+                // Return empty list if failed
+            }
+
+            return endpoints;
+        }
+
+        /// <summary>
+        /// Find wall corners based on geometry analysis
+        /// </summary>
+        /// <param name="wall">The wall to analyze</param>
+        /// <returns>List of corner points</returns>
+        public static List<XYZ> FindWallCorners(Wall wall)
+        {
+            return GetWallEdgeEndpoints(wall);
+        }
+
+        /// <summary>
+        /// Get adjacent walls that meet at a specific corner point
+        /// </summary>
+        /// <param name="wall">The primary wall</param>
+        /// <param name="cornerPoint">The corner point to check</param>
+        /// <param name="tolerance">Tolerance for point comparison (default 0.1 feet)</param>
+        /// <returns>List of adjacent walls</returns>
+        public static List<Wall> GetAdjacentWallsAtCorner(Wall wall, XYZ cornerPoint, double tolerance = 0.1)
+        {
+            var adjacentWalls = new List<Wall>();
+            
+            try
+            {
+                if (wall == null || cornerPoint == null)
+                    return adjacentWalls;
+
+                Document doc = wall.Document;
+                
+                // Get all walls in the document
+                var allWalls = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Wall))
+                    .Cast<Wall>()
+                    .Where(w => w.Id != wall.Id); // Exclude the original wall
+
+                foreach (var otherWall in allWalls)
+                {
+                    var otherEndpoints = GetWallEdgeEndpoints(otherWall);
+                    
+                    // Check if any endpoint of the other wall is close to our corner point
+                    foreach (var endpoint in otherEndpoints)
+                    {
+                        if (endpoint.DistanceTo(cornerPoint) <= tolerance)
+                        {
+                            adjacentWalls.Add(otherWall);
+                            break;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Return empty list if failed
+            }
+
+            return adjacentWalls;
+        }
+
+        /// <summary>
+        /// Calculate corner extension point where two walls meet
+        /// </summary>
+        /// <param name="wall1">First wall</param>
+        /// <param name="wall2">Second wall</param>
+        /// <param name="cornerPoint">The intersection point</param>
+        /// <returns>The optimal extension point for external wall creation</returns>
+        public static XYZ CalculateCornerExtensionPoint(Wall wall1, Wall wall2, XYZ cornerPoint)
+        {
+            try
+            {
+                if (wall1 == null || wall2 == null || cornerPoint == null)
+                    return cornerPoint;
+
+                // Get wall thicknesses
+                double thickness1 = GetWallThickness(wall1);
+                double thickness2 = GetWallThickness(wall2);
+                
+                // Get wall directions
+                var dir1 = GetWallDirection(wall1);
+                var dir2 = GetWallDirection(wall2);
+                
+                if (dir1 == null || dir2 == null)
+                    return cornerPoint;
+
+                // Calculate normals pointing outward from each wall
+                var normal1 = new XYZ(-dir1.Y, dir1.X, 0).Normalize();
+                var normal2 = new XYZ(-dir2.Y, dir2.X, 0).Normalize();
+
+                // Adjust normals based on actual wall orientation (might need to flip)
+                normal1 = AdjustNormalDirection(wall1, cornerPoint, normal1);
+                normal2 = AdjustNormalDirection(wall2, cornerPoint, normal2);
+
+                // Calculate extension point by moving along the bisector of the angle
+                var bisector = (normal1 + normal2).Normalize();
+                var extensionPoint = cornerPoint + bisector * Math.Max(thickness1, thickness2);
+
+                return extensionPoint;
+            }
+            catch
+            {
+                return cornerPoint;
+            }
+        }
+
+        /// <summary>
+        /// Get wall direction (normalized vector along wall length)
+        /// </summary>
+        private static XYZ GetWallDirection(Wall wall)
+        {
+            try
+            {
+                if (wall?.Location is LocationCurve locCurve && locCurve.Curve != null)
+                {
+                    var curve = locCurve.Curve;
+                    return (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize();
+                }
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Adjust normal direction to point outward from wall center
+        /// </summary>
+        private static XYZ AdjustNormalDirection(Wall wall, XYZ cornerPoint, XYZ initialNormal)
+        {
+            try
+            {
+                // Get wall center point
+                if (wall?.Location is LocationCurve locCurve && locCurve.Curve != null)
+                {
+                    var curve = locCurve.Curve;
+                    var wallCenter = (curve.GetEndPoint(0) + curve.GetEndPoint(1)) * 0.5;
+                    
+                    // Test both directions - choose the one pointing away from center
+                    var testPoint1 = cornerPoint + initialNormal * 0.1;
+                    var testPoint2 = cornerPoint - initialNormal * 0.1;
+                    
+                    if (testPoint1.DistanceTo(wallCenter) > testPoint2.DistanceTo(wallCenter))
+                        return initialNormal;
+                    else
+                        return -initialNormal;
+                }
+                return initialNormal;
+            }
+            catch
+            {
+                return initialNormal;
+            }
+        }
+
+        /// <summary>
+        /// Enhanced version of CreateExternalWall that uses geometry-based corner detection
+        /// </summary>
+        public static int CreateExternalWallWithGeometry(Document doc, Wall innerWall, WallType wallType)
+        {
+            if (innerWall == null || wallType == null)
+                return 0;
+
+            int wallsCreated = 0;
+
+            try
+            {
+                // Get wall location
+                LocationCurve locationCurve = innerWall.Location as LocationCurve;
+                if (locationCurve == null || locationCurve.Curve == null)
+                    return 0;
+
+                Curve curve = locationCurve.Curve;
+
+                // Get wall properties
+                double height = GetWallHeight(innerWall);
+                Level level = GetWallLevel(innerWall);
+
+                if (level == null)
+                    return 0;
+
+                // Compute total offset distance (center-to-center)
+                double gapDistance = 0.0; // gap in feet (0 = flush)
+                double totalOffsetDistance = ComputeCenterOffset(innerWall, wallType, gapDistance);
+
+                // Get wall face orientation to determine offset direction
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+
+                // Create offset curve for external wall
+                List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(curve, totalOffsetDistance, wallFaceNormal);
+
+                // Find corners and extend if needed
+                var corners = FindWallCorners(innerWall);
+                var extendedCurves = ExtendCurveToCorners(offsetCurves, innerWall, corners);
+
+                foreach (Curve offsetCurve in extendedCurves)
+                {
+                    if (offsetCurve == null || offsetCurve.Length < 0.01)
+                        continue;
+
+                    // Invert curve direction so inner face is on the side toward original wall
+                    Curve reversedCurve = offsetCurve.CreateReversed();
+
+                    Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, false);
+
+                    if (externalWall != null)
+                    {
+                        DisableWallJoins(externalWall);
+                        CopyWallProperties(innerWall, externalWall);
+                        wallsCreated++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error creating external wall with geometry: {ex.Message}");
+            }
+
+            return wallsCreated;
+        }
+
+        /// <summary>
+        /// Extend curves to reach wall corners using geometry-based analysis
+        /// </summary>
+        private static List<Curve> ExtendCurveToCorners(List<Curve> curves, Wall wall, List<XYZ> corners)
+        {
+            var extendedCurves = new List<Curve>();
+            
+            try
+            {
+                if (curves == null || curves.Count == 0)
+                    return extendedCurves;
+
+                foreach (var curve in curves)
+                {
+                    if (curve == null || !(curve is Line line))
+                    {
+                        extendedCurves.Add(curve);
+                        continue;
+                    }
+
+                    var startPoint = line.GetEndPoint(0);
+                    var endPoint = line.GetEndPoint(1);
+
+                    // Find and extend to nearest corners
+                    var extendedStart = FindNearestCornerExtension(startPoint, corners, wall);
+                    var extendedEnd = FindNearestCornerExtension(endPoint, corners, wall);
+
+                    // Create extended line
+                    var extendedLine = Line.CreateBound(extendedStart, extendedEnd);
+                    extendedCurves.Add(extendedLine);
+                }
+            }
+            catch
+            {
+                // Return original curves if extension fails
+                extendedCurves.AddRange(curves);
+            }
+
+            return extendedCurves;
+        }
+
+        /// <summary>
+        /// Find the nearest corner point for extending a curve endpoint
+        /// </summary>
+        private static XYZ FindNearestCornerExtension(XYZ point, List<XYZ> corners, Wall wall)
+        {
+            if (corners == null || corners.Count == 0)
+                return point;
+
+            XYZ nearestCorner = point;
+            double minDistance = double.MaxValue;
+
+            foreach (var corner in corners)
+            {
+                double distance = point.DistanceTo(corner);
+                if (distance < minDistance && distance > 0.1) // Avoid very small extensions
+                {
+                    minDistance = distance;
+                    nearestCorner = corner;
+                }
+            }
+
+            return nearestCorner;
+        }
+
+        #endregion
     }
 }
