@@ -1342,7 +1342,7 @@ namespace Revit_AutoExternalWall.Utilities
                     if (face is PlanarFace planarFace)
                     {
                         // Extract edges from EdgeLoops
-                        foreach (EdgeLoop edgeLoop in planarFace.EdgeLoops)
+                        foreach (EdgeArray edgeLoop in planarFace.EdgeLoops)
                         {
                             foreach (Edge edge in edgeLoop)
                             {
