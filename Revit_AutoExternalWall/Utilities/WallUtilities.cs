@@ -139,8 +139,8 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Create external wall directly from the longest exterior edge of the wall
-        /// This ensures the wall extends to actual corners of existing walls
+        /// Create external wall by extending wall lines to their intersections
+        /// This ensures walls reach actual corners even when walls are joined
         /// </summary>
         public static int CreateExternalWallFromExteriorEdge(Document doc, Wall innerWall, WallType wallType, List<Wall> allSelectedWalls = null)
         {
@@ -162,7 +162,6 @@ namespace Revit_AutoExternalWall.Utilities
                     return 0;
 
                 double newThickness = GetWallTypeThickness(wallType);
-                List<WallCurveInfo> existingWallCurves = GetExistingWallCurves(doc, innerWall);
                 List<Curve> createdExternalCurves = new List<Curve>();
 
                 // Get wall direction and endpoints from LocationCurve (full length)
@@ -173,20 +172,6 @@ namespace Revit_AutoExternalWall.Utilities
                 // Get wall face normal for offset direction
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
                 
-                // Get exterior face to determine which side is exterior
-                var exteriorFaceRefs = GetExteriorFaceReferences(innerWall);
-                if (exteriorFaceRefs == null || exteriorFaceRefs.Count == 0)
-                    return 0;
-
-                // Find all corner points from selected walls (if provided)
-                List<XYZ> cornerPoints = new List<XYZ>();
-                if (allSelectedWalls != null && allSelectedWalls.Count > 1)
-                {
-                    cornerPoints = FindAllCornerPoints(allSelectedWalls, level.Elevation);
-                }
-
-                // Get the exterior edge by offsetting the LocationCurve
-                // First, find which side is exterior by checking face normal
                 double levelElevation = level.Elevation;
                 XYZ adjustedStart = new XYZ(wallStart.X, wallStart.Y, levelElevation);
                 XYZ adjustedEnd = new XYZ(wallEnd.X, wallEnd.Y, levelElevation);
@@ -210,38 +195,31 @@ namespace Revit_AutoExternalWall.Utilities
                     if (!(offsetCurve is Line offsetLine))
                         continue;
 
-                    // Extend to corner points if available
-                    Line extendedLine = offsetLine;
-                    if (cornerPoints.Count > 0)
-                    {
-                        extendedLine = ExtendLineToCorners(offsetLine, cornerPoints, wallDir);
-                    }
-
-                    // Trim against existing walls
-                    Curve trimmed = TrimCurveAgainstExisting(
-                        extendedLine, 
-                        existingWallCurves, 
-                        newThickness / 2.0
-                    );
+                    // Extend line to intersections with other selected walls
+                    Line extendedLine = ExtendLineToIntersections(offsetLine, innerWall, allSelectedWalls, levelElevation, newThickness);
                     
-                    if (trimmed == null || trimmed.Length < 0.01)
+                    if (extendedLine == null || extendedLine.Length < 0.01)
                         continue;
 
-                    // Trim against already created external walls
+                    // Trim against already created external walls (but not against existing walls)
                     if (createdExternalCurves.Count > 0)
                     {
-                        trimmed = TrimCurveAgainstExternalCurves(
-                            trimmed, 
+                        Curve trimmed = TrimCurveAgainstExternalCurves(
+                            extendedLine, 
                             createdExternalCurves, 
                             newThickness / 2.0
                         );
                         
                         if (trimmed == null || trimmed.Length < 0.01)
                             continue;
+                        
+                        extendedLine = trimmed as Line;
+                        if (extendedLine == null)
+                            continue;
                     }
 
                     // Create wall
-                    Curve reversedCurve = trimmed.CreateReversed();
+                    Curve reversedCurve = extendedLine.CreateReversed();
                     Wall externalWall = Wall.Create(
                         doc, 
                         reversedCurve, 
@@ -257,7 +235,7 @@ namespace Revit_AutoExternalWall.Utilities
                     {
                         DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
-                        createdExternalCurves.Add(trimmed);
+                        createdExternalCurves.Add(extendedLine);
                         wallsCreated++;
                     }
                 }
@@ -268,6 +246,119 @@ namespace Revit_AutoExternalWall.Utilities
             }
 
             return wallsCreated;
+        }
+
+        /// <summary>
+        /// Extend a line to intersections with other selected walls' extended lines
+        /// </summary>
+        private static Line ExtendLineToIntersections(Line line, Wall currentWall, List<Wall> allSelectedWalls, double levelElevation, double newThickness)
+        {
+            if (allSelectedWalls == null || allSelectedWalls.Count < 2)
+                return line; // No other walls to intersect with
+
+            try
+            {
+                XYZ start = line.GetEndPoint(0);
+                XYZ end = line.GetEndPoint(1);
+                XYZ dir = (end - start).Normalize();
+                
+                // Create extended line (infinite in both directions)
+                XYZ extendedStart = start - dir * 1000.0; // Extend 1000 feet in negative direction
+                XYZ extendedEnd = end + dir * 1000.0; // Extend 1000 feet in positive direction
+                Line extendedCurrentLine = Line.CreateBound(extendedStart, extendedEnd);
+
+                // Collect intersection points
+                List<double> intersectionParams = new List<double>();
+                double startParam = 0.0; // Parameter at original start point
+                double endParam = (end - start).DotProduct(dir); // Parameter at original end point
+                
+                // Add original endpoints as potential limits
+                intersectionParams.Add(startParam);
+                intersectionParams.Add(endParam);
+
+                // Find intersections with other selected walls
+                foreach (var otherWall in allSelectedWalls)
+                {
+                    if (otherWall.Id == currentWall.Id)
+                        continue;
+
+                    if (!(otherWall.Location is LocationCurve otherLoc) || !(otherLoc.Curve is Line otherLine))
+                        continue;
+
+                    // Get other wall's center line
+                    XYZ otherStart = otherLine.GetEndPoint(0);
+                    XYZ otherEnd = otherLine.GetEndPoint(1);
+                    XYZ otherDir = (otherEnd - otherStart).Normalize();
+                    
+                    // Project to level elevation
+                    XYZ otherAdjustedStart = new XYZ(otherStart.X, otherStart.Y, levelElevation);
+                    XYZ otherAdjustedEnd = new XYZ(otherEnd.X, otherEnd.Y, levelElevation);
+                    Line otherCenterLine = Line.CreateBound(otherAdjustedStart, otherAdjustedEnd);
+
+                    // Offset other wall's line outward
+                    double otherThickness = GetWallThickness(otherWall);
+                    XYZ otherFaceNormal = GetWallFaceNormal(otherWall);
+                    double otherTotalOffset = (otherThickness / 2.0) + (newThickness / 2.0);
+                    
+                    List<Curve> otherOffsetCurves = GeometryUtilities.OffsetCurve(
+                        otherCenterLine,
+                        otherTotalOffset,
+                        otherFaceNormal
+                    );
+
+                    foreach (var otherOffsetCurve in otherOffsetCurves)
+                    {
+                        if (!(otherOffsetCurve is Line otherOffsetLine))
+                            continue;
+
+                        // Extend other line
+                        XYZ otherExtStart = otherOffsetLine.GetEndPoint(0) - otherDir * 1000.0;
+                        XYZ otherExtEnd = otherOffsetLine.GetEndPoint(1) + otherDir * 1000.0;
+                        Line extendedOtherLine = Line.CreateBound(otherExtStart, otherExtEnd);
+
+                        // Find intersection
+                        SetComparisonResult result = extendedCurrentLine.Intersect(extendedOtherLine, out IntersectionResultArray intersectionArray);
+                        
+                        if (result != SetComparisonResult.Disjoint && intersectionArray != null && !intersectionArray.IsEmpty)
+                        {
+                            for (int i = 0; i < intersectionArray.Size; i++)
+                            {
+                                XYZ intersectionPoint = intersectionArray.get_Item(i)?.XYZPoint;
+                                if (intersectionPoint != null)
+                                {
+                                    // Project to level elevation
+                                    XYZ projectedPoint = new XYZ(intersectionPoint.X, intersectionPoint.Y, levelElevation);
+                                    
+                                    // Calculate parameter along current line
+                                    XYZ toIntersection = projectedPoint - start;
+                                    double t = toIntersection.DotProduct(dir);
+                                    
+                                    // Only add if intersection is near the line (within reasonable distance)
+                                    XYZ perpendicular = toIntersection - (dir * t);
+                                    if (perpendicular.GetLength() < 0.5) // Within 0.5ft (~150mm)
+                                    {
+                                        intersectionParams.Add(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Find min and max parameters
+                double minT = intersectionParams.Min();
+                double maxT = intersectionParams.Max();
+
+                // Create extended line
+                XYZ newStart = start + dir * minT;
+                XYZ newEnd = start + dir * maxT;
+                
+                return Line.CreateBound(newStart, newEnd);
+            }
+            catch
+            {
+                return line; // Return original line on error
+            }
         }
 
         /// <summary>
