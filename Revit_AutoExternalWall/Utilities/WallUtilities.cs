@@ -142,7 +142,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// Create external wall directly from the longest exterior edge of the wall
         /// This ensures the wall extends to actual corners of existing walls
         /// </summary>
-        public static int CreateExternalWallFromExteriorEdge(Document doc, Wall innerWall, WallType wallType)
+        public static int CreateExternalWallFromExteriorEdge(Document doc, Wall innerWall, WallType wallType, List<Wall> allSelectedWalls = null)
         {
             if (innerWall == null || wallType == null)
                 return 0;
@@ -156,64 +156,49 @@ namespace Revit_AutoExternalWall.Utilities
                 if (level == null)
                     return 0;
 
-                // Get exterior face references
-                var exteriorFaceRefs = GetExteriorFaceReferences(innerWall);
-                if (exteriorFaceRefs == null || exteriorFaceRefs.Count == 0)
+                // Use LocationCurve to get full wall length (before joining)
+                LocationCurve locationCurve = innerWall.Location as LocationCurve;
+                if (locationCurve == null || locationCurve.Curve == null || !(locationCurve.Curve is Line wallLine))
                     return 0;
 
                 double newThickness = GetWallTypeThickness(wallType);
                 List<WallCurveInfo> existingWallCurves = GetExistingWallCurves(doc, innerWall);
                 List<Curve> createdExternalCurves = new List<Curve>();
 
-                // Find the longest horizontal edge from exterior face
-                Curve longestEdge = null;
-                double maxLength = 0;
-
-                foreach (var faceRef in exteriorFaceRefs)
-                {
-                    var face = GetFaceFromReference(doc, faceRef);
-                    if (face is PlanarFace planarFace)
-                    {
-                        foreach (EdgeArray edgeLoop in planarFace.EdgeLoops)
-                        {
-                            foreach (Edge edge in edgeLoop)
-                            {
-                                Curve edgeCurve = edge.AsCurve();
-                                if (edgeCurve != null)
-                                {
-                                    // Check if it's a horizontal edge (along wall length)
-                                    XYZ startPt = edgeCurve.GetEndPoint(0);
-                                    XYZ endPt = edgeCurve.GetEndPoint(1);
-                                    double zDiff = Math.Abs(startPt.Z - endPt.Z);
-                                    
-                                    if (zDiff < 0.01 && edgeCurve.Length > maxLength)
-                                    {
-                                        maxLength = edgeCurve.Length;
-                                        longestEdge = edgeCurve;
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
-
-                if (longestEdge == null || maxLength < 0.01)
+                // Get wall direction and endpoints from LocationCurve (full length)
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ wallDir = (wallEnd - wallStart).Normalize();
+                
+                // Get wall face normal for offset direction
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+                
+                // Get exterior face to determine which side is exterior
+                var exteriorFaceRefs = GetExteriorFaceReferences(innerWall);
+                if (exteriorFaceRefs == null || exteriorFaceRefs.Count == 0)
                     return 0;
 
-                // Project to level elevation
-                XYZ longestStartPt = longestEdge.GetEndPoint(0);
-                XYZ longestEndPt = longestEdge.GetEndPoint(1);
-                double levelElevation = level.Elevation;
-                XYZ adjustedStart = new XYZ(longestStartPt.X, longestStartPt.Y, levelElevation);
-                XYZ adjustedEnd = new XYZ(longestEndPt.X, longestEndPt.Y, levelElevation);
-                Line exteriorEdge = Line.CreateBound(adjustedStart, adjustedEnd);
+                // Find all corner points from selected walls (if provided)
+                List<XYZ> cornerPoints = new List<XYZ>();
+                if (allSelectedWalls != null && allSelectedWalls.Count > 1)
+                {
+                    cornerPoints = FindAllCornerPoints(allSelectedWalls, level.Elevation);
+                }
 
-                // Offset outward by half thickness
-                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+                // Get the exterior edge by offsetting the LocationCurve
+                // First, find which side is exterior by checking face normal
+                double levelElevation = level.Elevation;
+                XYZ adjustedStart = new XYZ(wallStart.X, wallStart.Y, levelElevation);
+                XYZ adjustedEnd = new XYZ(wallEnd.X, wallEnd.Y, levelElevation);
+                Line wallCenterLine = Line.CreateBound(adjustedStart, adjustedEnd);
+
+                // Offset outward by half thickness of existing wall + half thickness of new wall
+                double existingThickness = GetWallThickness(innerWall);
+                double totalOffset = (existingThickness / 2.0) + (newThickness / 2.0);
+                
                 List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(
-                    exteriorEdge, 
-                    newThickness / 2.0, 
+                    wallCenterLine, 
+                    totalOffset, 
                     wallFaceNormal
                 );
 
@@ -222,9 +207,19 @@ namespace Revit_AutoExternalWall.Utilities
                     if (offsetCurve == null || offsetCurve.Length < 0.01)
                         continue;
 
+                    if (!(offsetCurve is Line offsetLine))
+                        continue;
+
+                    // Extend to corner points if available
+                    Line extendedLine = offsetLine;
+                    if (cornerPoints.Count > 0)
+                    {
+                        extendedLine = ExtendLineToCorners(offsetLine, cornerPoints, wallDir);
+                    }
+
                     // Trim against existing walls
                     Curve trimmed = TrimCurveAgainstExisting(
-                        offsetCurve, 
+                        extendedLine, 
                         existingWallCurves, 
                         newThickness / 2.0
                     );
@@ -273,6 +268,173 @@ namespace Revit_AutoExternalWall.Utilities
             }
 
             return wallsCreated;
+        }
+
+        /// <summary>
+        /// Find all corner points from selected walls by analyzing their LocationCurve intersections
+        /// </summary>
+        private static List<XYZ> FindAllCornerPoints(List<Wall> walls, double levelElevation)
+        {
+            var cornerPoints = new List<XYZ>();
+            const double tolerance = 0.01; // ~3mm
+
+            try
+            {
+                if (walls == null || walls.Count < 2)
+                    return cornerPoints;
+
+                // Get all wall center lines
+                var wallLines = new List<Line>();
+                foreach (var wall in walls)
+                {
+                    if (wall.Location is LocationCurve lc && lc.Curve is Line line)
+                    {
+                        XYZ start = line.GetEndPoint(0);
+                        XYZ end = line.GetEndPoint(1);
+                        XYZ adjustedStart = new XYZ(start.X, start.Y, levelElevation);
+                        XYZ adjustedEnd = new XYZ(end.X, end.Y, levelElevation);
+                        wallLines.Add(Line.CreateBound(adjustedStart, adjustedEnd));
+                    }
+                }
+
+                // Find intersections between all pairs of walls
+                for (int i = 0; i < wallLines.Count; i++)
+                {
+                    for (int j = i + 1; j < wallLines.Count; j++)
+                    {
+                        Line line1 = wallLines[i];
+                        Line line2 = wallLines[j];
+
+                        SetComparisonResult result = line1.Intersect(line2, out IntersectionResultArray intersectionArray);
+                        
+                        if (result == SetComparisonResult.Intersects && intersectionArray != null && !intersectionArray.IsEmpty)
+                        {
+                            for (int k = 0; k < intersectionArray.Size; k++)
+                            {
+                                XYZ intersectionPoint = intersectionArray.get_Item(k)?.XYZPoint;
+                                if (intersectionPoint != null)
+                                {
+                                    // Project to level elevation
+                                    XYZ projectedPoint = new XYZ(intersectionPoint.X, intersectionPoint.Y, levelElevation);
+                                    
+                                    // Check if point is not already in list
+                                    if (!cornerPoints.Any(p => p.DistanceTo(projectedPoint) < tolerance))
+                                    {
+                                        cornerPoints.Add(projectedPoint);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Also add endpoints of walls that are near other walls (potential corners)
+                foreach (var wallLine in wallLines)
+                {
+                    XYZ startPt = wallLine.GetEndPoint(0);
+                    XYZ endPt = wallLine.GetEndPoint(1);
+
+                    // Check if endpoint is near any other wall line
+                    foreach (var otherLine in wallLines)
+                    {
+                        if (otherLine == wallLine) continue;
+
+                        // Calculate distance from point to line manually
+                        XYZ otherStart = otherLine.GetEndPoint(0);
+                        XYZ otherEnd = otherLine.GetEndPoint(1);
+                        XYZ otherDir = (otherEnd - otherStart).Normalize();
+                        
+                        // Project point onto other line
+                        XYZ toStart = startPt - otherStart;
+                        double tStart = toStart.DotProduct(otherDir);
+                        tStart = Math.Max(0, Math.Min(tStart, otherLine.Length));
+                        XYZ closestStart = otherStart + otherDir * tStart;
+                        double distToStart = startPt.DistanceTo(closestStart);
+                        
+                        XYZ toEnd = endPt - otherStart;
+                        double tEnd = toEnd.DotProduct(otherDir);
+                        tEnd = Math.Max(0, Math.Min(tEnd, otherLine.Length));
+                        XYZ closestEnd = otherStart + otherDir * tEnd;
+                        double distToEnd = endPt.DistanceTo(closestEnd);
+
+                        if (distToStart < tolerance && !cornerPoints.Any(p => p.DistanceTo(startPt) < tolerance))
+                        {
+                            cornerPoints.Add(startPt);
+                        }
+                        if (distToEnd < tolerance && !cornerPoints.Any(p => p.DistanceTo(endPt) < tolerance))
+                        {
+                            cornerPoints.Add(endPt);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Return empty list on error
+            }
+
+            return cornerPoints;
+        }
+
+        /// <summary>
+        /// Extend a line to reach the nearest corner points along its direction
+        /// </summary>
+        private static Line ExtendLineToCorners(Line line, List<XYZ> cornerPoints, XYZ wallDirection)
+        {
+            if (cornerPoints == null || cornerPoints.Count == 0)
+                return line;
+
+            try
+            {
+                XYZ start = line.GetEndPoint(0);
+                XYZ end = line.GetEndPoint(1);
+                XYZ dir = (end - start).Normalize();
+                
+                // Project corner points onto the line direction
+                double minT = double.MaxValue;
+                double maxT = double.MinValue;
+                
+                // Include original endpoints
+                double startT = (start - start).DotProduct(dir);
+                double endT = (end - start).DotProduct(dir);
+                minT = Math.Min(minT, Math.Min(startT, endT));
+                maxT = Math.Max(maxT, Math.Max(startT, endT));
+
+                const double extendTolerance = 5.0; // Extend up to 5 feet (~1.5m) to reach corners
+                
+                foreach (var corner in cornerPoints)
+                {
+                    // Project corner onto line
+                    XYZ toCorner = corner - start;
+                    double t = toCorner.DotProduct(dir);
+                    
+                    // Check if corner is roughly aligned with wall direction
+                    XYZ perpendicular = toCorner - (dir * t);
+                    double perpendicularDist = perpendicular.GetLength();
+                    
+                    if (perpendicularDist < 0.5) // Corner is within 0.5ft (~150mm) of line
+                    {
+                        // Check if corner extends beyond current endpoints
+                        if (t < minT && Math.Abs(t - minT) < extendTolerance)
+                            minT = t;
+                        if (t > maxT && Math.Abs(t - maxT) < extendTolerance)
+                            maxT = t;
+                    }
+                }
+
+                if (minT < double.MaxValue && maxT > double.MinValue)
+                {
+                    XYZ newStart = start + dir * minT;
+                    XYZ newEnd = start + dir * maxT;
+                    return Line.CreateBound(newStart, newEnd);
+                }
+            }
+            catch
+            {
+                // Return original line on error
+            }
+
+            return line;
         }
 
         /// <summary>
