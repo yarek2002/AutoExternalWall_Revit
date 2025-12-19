@@ -307,7 +307,7 @@ namespace Revit_AutoExternalWall.Utilities
 
                         SetComparisonResult result = line1.Intersect(line2, out IntersectionResultArray intersectionArray);
                         
-                        if (result == SetComparisonResult.Intersects && intersectionArray != null && !intersectionArray.IsEmpty)
+                        if (result != SetComparisonResult.Disjoint && intersectionArray != null && !intersectionArray.IsEmpty)
                         {
                             for (int k = 0; k < intersectionArray.Size; k++)
                             {
