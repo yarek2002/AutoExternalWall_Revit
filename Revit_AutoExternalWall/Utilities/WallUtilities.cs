@@ -201,22 +201,8 @@ namespace Revit_AutoExternalWall.Utilities
                     if (extendedLine == null || extendedLine.Length < 0.01)
                         continue;
 
-                    // Trim against already created external walls (but not against existing walls)
-                    if (createdExternalCurves.Count > 0)
-                    {
-                        Curve trimmed = TrimCurveAgainstExternalCurves(
-                            extendedLine, 
-                            createdExternalCurves, 
-                            newThickness / 2.0
-                        );
-                        
-                        if (trimmed == null || trimmed.Length < 0.01)
-                            continue;
-                        
-                        extendedLine = trimmed as Line;
-                        if (extendedLine == null)
-                            continue;
-                    }
+                    // Don't trim against already created external walls - let them intersect naturally
+                    // This ensures walls extend to corners properly
 
                     // Create wall
                     Curve reversedCurve = extendedLine.CreateReversed();
@@ -311,9 +297,14 @@ namespace Revit_AutoExternalWall.Utilities
                         if (!(otherOffsetCurve is Line otherOffsetLine))
                             continue;
 
-                        // Extend other line
-                        XYZ otherExtStart = otherOffsetLine.GetEndPoint(0) - otherDir * 1000.0;
-                        XYZ otherExtEnd = otherOffsetLine.GetEndPoint(1) + otherDir * 1000.0;
+                        // Get direction of the offset line (not the center line)
+                        XYZ otherOffsetStart = otherOffsetLine.GetEndPoint(0);
+                        XYZ otherOffsetEnd = otherOffsetLine.GetEndPoint(1);
+                        XYZ otherOffsetDir = (otherOffsetEnd - otherOffsetStart).Normalize();
+
+                        // Extend other line using its own direction
+                        XYZ otherExtStart = otherOffsetStart - otherOffsetDir * 1000.0;
+                        XYZ otherExtEnd = otherOffsetEnd + otherOffsetDir * 1000.0;
                         Line extendedOtherLine = Line.CreateBound(otherExtStart, otherExtEnd);
 
                         // Find intersection
@@ -333,9 +324,10 @@ namespace Revit_AutoExternalWall.Utilities
                                     XYZ toIntersection = projectedPoint - start;
                                     double t = toIntersection.DotProduct(dir);
                                     
-                                    // Only add if intersection is near the line (within reasonable distance)
+                                    // Add intersection point - remove strict perpendicular check to allow more intersections
+                                    // Only filter out points that are clearly not on the line (more than 1ft away)
                                     XYZ perpendicular = toIntersection - (dir * t);
-                                    if (perpendicular.GetLength() < 0.5) // Within 0.5ft (~150mm)
+                                    if (perpendicular.GetLength() < 1.0) // Within 1ft (~300mm) - more lenient
                                     {
                                         intersectionParams.Add(t);
                                     }
@@ -346,12 +338,24 @@ namespace Revit_AutoExternalWall.Utilities
                 }
 
                 // Find min and max parameters
+                if (intersectionParams.Count == 0)
+                {
+                    // No intersections found, return original line
+                    return line;
+                }
+
                 double minT = intersectionParams.Min();
                 double maxT = intersectionParams.Max();
 
+                // Ensure we extend beyond original endpoints if intersections are found
+                // This ensures walls reach corners even if they're beyond the original wall length
+                double originalLength = (end - start).DotProduct(dir);
+                double minParam = Math.Min(0.0, minT); // Allow extension backwards
+                double maxParam = Math.Max(originalLength, maxT); // Allow extension forwards
+
                 // Create extended line
-                XYZ newStart = start + dir * minT;
-                XYZ newEnd = start + dir * maxT;
+                XYZ newStart = start + dir * minParam;
+                XYZ newEnd = start + dir * maxParam;
                 
                 return Line.CreateBound(newStart, newEnd);
             }
