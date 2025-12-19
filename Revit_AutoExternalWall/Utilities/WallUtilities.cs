@@ -139,6 +139,143 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Create external wall directly from the longest exterior edge of the wall
+        /// This ensures the wall extends to actual corners of existing walls
+        /// </summary>
+        public static int CreateExternalWallFromExteriorEdge(Document doc, Wall innerWall, WallType wallType)
+        {
+            if (innerWall == null || wallType == null)
+                return 0;
+
+            int wallsCreated = 0;
+
+            try
+            {
+                Level level = GetWallLevel(innerWall);
+                double height = GetWallHeight(innerWall);
+                if (level == null)
+                    return 0;
+
+                // Get exterior face references
+                var exteriorFaceRefs = GetExteriorFaceReferences(innerWall);
+                if (exteriorFaceRefs == null || exteriorFaceRefs.Count == 0)
+                    return 0;
+
+                double newThickness = GetWallTypeThickness(wallType);
+                List<WallCurveInfo> existingWallCurves = GetExistingWallCurves(doc, innerWall);
+                List<Curve> createdExternalCurves = new List<Curve>();
+
+                // Find the longest horizontal edge from exterior face
+                Curve longestEdge = null;
+                double maxLength = 0;
+
+                foreach (var faceRef in exteriorFaceRefs)
+                {
+                    var face = GetFaceFromReference(doc, faceRef);
+                    if (face is PlanarFace planarFace)
+                    {
+                        foreach (EdgeArray edgeLoop in planarFace.EdgeLoops)
+                        {
+                            foreach (Edge edge in edgeLoop)
+                            {
+                                Curve edgeCurve = edge.AsCurve();
+                                if (edgeCurve != null)
+                                {
+                                    // Check if it's a horizontal edge (along wall length)
+                                    XYZ startPt = edgeCurve.GetEndPoint(0);
+                                    XYZ endPt = edgeCurve.GetEndPoint(1);
+                                    double zDiff = Math.Abs(startPt.Z - endPt.Z);
+                                    
+                                    if (zDiff < 0.01 && edgeCurve.Length > maxLength)
+                                    {
+                                        maxLength = edgeCurve.Length;
+                                        longestEdge = edgeCurve;
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                if (longestEdge == null || maxLength < 0.01)
+                    return 0;
+
+                // Project to level elevation
+                XYZ startPt = longestEdge.GetEndPoint(0);
+                XYZ endPt = longestEdge.GetEndPoint(1);
+                double levelElevation = level.Elevation;
+                XYZ adjustedStart = new XYZ(startPt.X, startPt.Y, levelElevation);
+                XYZ adjustedEnd = new XYZ(endPt.X, endPt.Y, levelElevation);
+                Line exteriorEdge = Line.CreateBound(adjustedStart, adjustedEnd);
+
+                // Offset outward by half thickness
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+                List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(
+                    exteriorEdge, 
+                    newThickness / 2.0, 
+                    wallFaceNormal
+                );
+
+                foreach (Curve offsetCurve in offsetCurves)
+                {
+                    if (offsetCurve == null || offsetCurve.Length < 0.01)
+                        continue;
+
+                    // Trim against existing walls
+                    Curve trimmed = TrimCurveAgainstExisting(
+                        offsetCurve, 
+                        existingWallCurves, 
+                        newThickness / 2.0
+                    );
+                    
+                    if (trimmed == null || trimmed.Length < 0.01)
+                        continue;
+
+                    // Trim against already created external walls
+                    if (createdExternalCurves.Count > 0)
+                    {
+                        trimmed = TrimCurveAgainstExternalCurves(
+                            trimmed, 
+                            createdExternalCurves, 
+                            newThickness / 2.0
+                        );
+                        
+                        if (trimmed == null || trimmed.Length < 0.01)
+                            continue;
+                    }
+
+                    // Create wall
+                    Curve reversedCurve = trimmed.CreateReversed();
+                    Wall externalWall = Wall.Create(
+                        doc, 
+                        reversedCurve, 
+                        wallType.Id, 
+                        level.Id, 
+                        height, 
+                        0.0, 
+                        false, 
+                        false
+                    );
+
+                    if (externalWall != null)
+                    {
+                        DisableWallJoins(externalWall);
+                        CopyWallProperties(innerWall, externalWall);
+                        createdExternalCurves.Add(trimmed);
+                        wallsCreated++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error creating external wall from exterior edge: {ex.Message}");
+            }
+
+            return wallsCreated;
+        }
+
+        /// <summary>
         /// Get wall height
         /// </summary>
         private static double GetWallHeight(Wall wall)
