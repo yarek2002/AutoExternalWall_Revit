@@ -202,11 +202,11 @@ namespace Revit_AutoExternalWall.Utilities
                     return 0;
 
                 // Project to level elevation
-                XYZ startPt = longestEdge.GetEndPoint(0);
-                XYZ endPt = longestEdge.GetEndPoint(1);
+                XYZ longestStartPt = longestEdge.GetEndPoint(0);
+                XYZ longestEndPt = longestEdge.GetEndPoint(1);
                 double levelElevation = level.Elevation;
-                XYZ adjustedStart = new XYZ(startPt.X, startPt.Y, levelElevation);
-                XYZ adjustedEnd = new XYZ(endPt.X, endPt.Y, levelElevation);
+                XYZ adjustedStart = new XYZ(longestStartPt.X, longestStartPt.Y, levelElevation);
+                XYZ adjustedEnd = new XYZ(longestEndPt.X, longestEndPt.Y, levelElevation);
                 Line exteriorEdge = Line.CreateBound(adjustedStart, adjustedEnd);
 
                 // Offset outward by half thickness
