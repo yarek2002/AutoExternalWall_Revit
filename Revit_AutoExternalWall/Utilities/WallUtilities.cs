@@ -148,6 +148,84 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Create external walls for a set of existing walls, taking into account
+        /// their mutual intersections so that новые внешние стены сходятся в общей
+        /// точке, но угол остаётся «открытым» (join'ы отключены).
+        /// </summary>
+        public static int CreateExternalWallsFromExistingWalls(Document doc, List<Wall> walls, WallType wallType)
+        {
+            if (doc == null || walls == null || walls.Count == 0 || wallType == null)
+                return 0;
+
+            var candidates = new List<ExternalWallCandidate>();
+            int created = 0;
+
+            try
+            {
+                foreach (var innerWall in walls)
+                {
+                    if (innerWall == null)
+                        continue;
+
+                    if (!(innerWall.Location is LocationCurve lc) || lc.Curve == null)
+                        continue;
+
+                    Curve baseCurve = lc.Curve;
+                    if (!(baseCurve is Line) || baseCurve.Length < 0.01)
+                        continue; // для простоты работаем только с прямыми стенами
+
+                    double existingThickness = GetWallThickness(innerWall);
+                    double newThickness = GetWallTypeThickness(wallType);
+                    double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
+
+                    XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+                    var offsetCurves = GeometryUtilities.OffsetCurve(baseCurve, totalOffsetDistance, wallFaceNormal);
+                    if (offsetCurves == null || offsetCurves.Count == 0)
+                        continue;
+
+                    Curve offset = offsetCurves[0];
+                    if (offset == null || offset.Length < 0.01)
+                        continue;
+
+                    Curve reversed = offset.CreateReversed();
+
+                    candidates.Add(new ExternalWallCandidate
+                    {
+                        InnerWall = innerWall,
+                        Curve = reversed
+                    });
+                }
+
+                // Стягиваем все кандидаты к точкам пересечения их осей
+                AdjustExternalCandidatesAtIntersections(candidates);
+
+                // Создаём реальные стены
+                foreach (var cand in candidates)
+                {
+                    if (cand?.Curve == null || cand.Curve.Length < 0.01 || cand.InnerWall == null)
+                        continue;
+
+                    Level level = GetWallLevel(cand.InnerWall);
+                    double height = GetWallHeight(cand.InnerWall);
+                    if (level == null)
+                        continue;
+
+                    Wall externalWall = Wall.Create(doc, cand.Curve, wallType.Id, level.Id, height, 0.0, false, false);
+                    if (externalWall != null)
+                    {
+                        // Для режима "по стенам" тоже держим угол открытым
+                        DisableWallJoins(externalWall);
+                        CopyWallProperties(cand.InnerWall, externalWall);
+                        created++;
+                    }
+                }
+            }
+            catch { }
+
+            return created;
+        }
+
+        /// <summary>
         /// Get wall height
         /// </summary>
         private static double GetWallHeight(Wall wall)
@@ -1034,8 +1112,9 @@ namespace Revit_AutoExternalWall.Utilities
                     Wall externalWall = Wall.Create(doc, cand.Curve, wallType.Id, level.Id, height, 0.0, false, false);
                     if (externalWall != null)
                     {
-                        // В этом сценарии join'ы НЕ отключаем — геометрия уже выровнена в углах,
-                        // а Revit только «оформит» стык.
+                        // В этом сценарии явно отключаем join'ы, чтобы угол оставался
+                        // геометрически «открытым» и Revit не достраивал дополнительный угол.
+                        DisableWallJoins(externalWall);
                         CopyWallProperties(cand.InnerWall, externalWall);
                         created++;
                     }
