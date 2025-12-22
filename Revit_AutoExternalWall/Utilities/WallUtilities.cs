@@ -903,17 +903,24 @@ namespace Revit_AutoExternalWall.Utilities
                             bool siCloser = dsi <= dei;
                             XYZ near = siCloser ? si : ei;
                             XYZ far = siCloser ? ei : si;
-                            XYZ dirAlong = (far - near).Normalize();
 
-                            // точка, где ось бы пересеклась, минус половина толщины новой стены
-                            XYZ newEnd = p - dirAlong * externalHalfThickness;
-                            XYZ newOther = far;
-
-                            if (newEnd.DistanceTo(newOther) >= minLength)
+                            // Вектор от ближайшего торца к точке пересечения осей
+                            XYZ vToP = p - near;
+                            double lenToP = vToP.GetLength();
+                            if (lenToP > externalHalfThickness + 1e-6)
                             {
-                                li = siCloser
-                                    ? Line.CreateBound(newEnd, newOther)
-                                    : Line.CreateBound(newOther, newEnd);
+                                XYZ dirToP = vToP.Normalize();
+                                // Сдвигаем конец ОТ точки пересечения внутрь сегмента
+                                // на величину externalHalfThickness
+                                XYZ newEnd = near + dirToP * (lenToP - externalHalfThickness);
+                                XYZ newOther = far;
+
+                                if (newEnd.DistanceTo(newOther) >= minLength)
+                                {
+                                    li = siCloser
+                                        ? Line.CreateBound(newEnd, newOther)
+                                        : Line.CreateBound(newOther, newEnd);
+                                }
                             }
                         }
 
@@ -925,16 +932,21 @@ namespace Revit_AutoExternalWall.Utilities
                             bool sjCloser = dsj <= dej;
                             XYZ near = sjCloser ? sj : ej;
                             XYZ far = sjCloser ? ej : sj;
-                            XYZ dirAlong = (far - near).Normalize();
 
-                            XYZ newEnd = p - dirAlong * externalHalfThickness;
-                            XYZ newOther = far;
-
-                            if (newEnd.DistanceTo(newOther) >= minLength)
+                            XYZ vToP = p - near;
+                            double lenToP = vToP.GetLength();
+                            if (lenToP > externalHalfThickness + 1e-6)
                             {
-                                lj = sjCloser
-                                    ? Line.CreateBound(newEnd, newOther)
-                                    : Line.CreateBound(newOther, newEnd);
+                                XYZ dirToP = vToP.Normalize();
+                                XYZ newEnd = near + dirToP * (lenToP - externalHalfThickness);
+                                XYZ newOther = far;
+
+                                if (newEnd.DistanceTo(newOther) >= minLength)
+                                {
+                                    lj = sjCloser
+                                        ? Line.CreateBound(newEnd, newOther)
+                                        : Line.CreateBound(newOther, newEnd);
+                                }
                             }
                         }
 
