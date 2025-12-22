@@ -752,6 +752,25 @@ namespace Revit_AutoExternalWall.Utilities
             // Локальный массив, чтобы удобнее править кривые по индексу
             Curve[] curves = candidates.Select(c => c?.Curve).ToArray();
 
+            // Локальная функция пересечения БЕСКОНЕЧНЫХ прямых в XY,
+            // даже если отрезки пока не соприкасаются.
+            XYZ IntersectInfiniteLines2D(Line a, Line b)
+            {
+                XYZ p1 = a.GetEndPoint(0);
+                XYZ p2 = b.GetEndPoint(0);
+                XYZ v1 = a.GetEndPoint(1) - p1;
+                XYZ v2 = b.GetEndPoint(1) - p2;
+
+                double det = v1.X * v2.Y - v1.Y * v2.X;
+                if (Math.Abs(det) < 1e-9)
+                    return null; // параллельные или почти параллельные
+
+                double t = ((p2.X - p1.X) * v2.Y - (p2.Y - p1.Y) * v2.X) / det;
+                XYZ p = p1 + v1 * t;
+                // Z берём из первой линии, чтобы остаться в плоскости уровня
+                return new XYZ(p.X, p.Y, p1.Z);
+            }
+
             for (int i = 0; i < curves.Length; ++i)
             {
                 if (!(curves[i] is Line))
@@ -775,25 +794,36 @@ namespace Revit_AutoExternalWall.Utilities
 
                     try
                     {
-                        SetComparisonResult res = li.Intersect(lj, out IntersectionResultArray arr);
-                        if (res == SetComparisonResult.Disjoint)
-                            continue;
-
+                        // Пытаемся найти точку пересечения:
+                        // 1) сначала обычное пересечение отрезков,
+                        // 2) если отрезки пока не пересекаются (Disjoint) — пересечение бесконечных линий.
                         XYZ p = null;
-                        if (arr != null && !arr.IsEmpty)
+                        SetComparisonResult res = li.Intersect(lj, out IntersectionResultArray arr);
+                        if (res != SetComparisonResult.Disjoint && arr != null && !arr.IsEmpty)
                         {
-                            // Берём первую найденную точку пересечения
                             p = arr.get_Item(0)?.XYZPoint;
                         }
+                        else if (res == SetComparisonResult.Disjoint)
+                        {
+                            p = IntersectInfiniteLines2D(li, lj);
+                        }
+
                         if (p == null)
                             continue;
 
-                        // Подтягиваем оба сегмента к этой точке
+                        // Ограничиваем, насколько далеко можно тянуть отрезок до точки пересечения:
+                        // не больше толщины исходной стены, которая «создаёт» эту внешнюю стену.
+                        double maxExtendI = GetWallThickness(candidates[i].InnerWall);
+                        double maxExtendJ = GetWallThickness(candidates[j].InnerWall);
+
+                        // Подтягиваем оба сегмента к этой точке (с укорочением или с небольшим продлением),
+                        // но только если точка пересечения находится не дальше maxExtend* от ближайшего торца.
                         XYZ si = li.GetEndPoint(0);
                         XYZ ei = li.GetEndPoint(1);
                         double dsi = si.DistanceTo(p);
                         double dei = ei.DistanceTo(p);
-                        if (Math.Min(dsi, dei) < li.Length - minLength)
+                        double minDi = Math.Min(dsi, dei);
+                        if (minDi <= maxExtendI + 1e-3)
                         {
                             XYZ newSi = dsi <= dei ? p : si;
                             XYZ newEi = dsi <= dei ? ei : p;
@@ -805,7 +835,8 @@ namespace Revit_AutoExternalWall.Utilities
                         XYZ ej = lj.GetEndPoint(1);
                         double dsj = sj.DistanceTo(p);
                         double dej = ej.DistanceTo(p);
-                        if (Math.Min(dsj, dej) < lj.Length - minLength)
+                        double minDj = Math.Min(dsj, dej);
+                        if (minDj <= maxExtendJ + 1e-3)
                         {
                             XYZ newSj = dsj <= dej ? p : sj;
                             XYZ newEj = dsj <= dej ? ej : p;
