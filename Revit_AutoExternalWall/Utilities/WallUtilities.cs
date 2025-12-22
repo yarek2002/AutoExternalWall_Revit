@@ -1085,12 +1085,12 @@ namespace Revit_AutoExternalWall.Utilities
                     return null;
 
                 Curve offsetCurve = offsetCurves[0];
-                Curve reversed = offsetCurve.CreateReversed();
-                // 1) trim against existing walls
-                List<WallCurveInfo> existingWalls = existingWallCurves ?? GetExistingWallCurves(doc, innerWall);
-                Curve trimmed = TrimCurveAgainstExisting(reversed, existingWalls, existingThickness / 2.0);
-                if (trimmed == null)
-                    return null;
+                Curve trimmed = offsetCurve.CreateReversed();
+
+                // 1) Для сценария "внешние стены по комнатам" не режем кривую по существующим
+                // внутренним стенам, чтобы не укорачивать сегменты на внешних углах.
+                // Логику подрезки по существующим стенам оставляем для других сценариев
+                // в отдельном методе CreateExternalWallAlongCurve.
 
                 // 2) trim against already created external walls
                 if (existingExternalCurves != null && existingExternalCurves.Count > 0)
