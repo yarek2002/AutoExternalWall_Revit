@@ -196,8 +196,10 @@ namespace Revit_AutoExternalWall.Utilities
                     });
                 }
 
-                // Стягиваем все кандидаты к точкам пересечения их осей
-                AdjustExternalCandidatesAtIntersections(candidates);
+                // Стягиваем все кандидаты к точкам пересечения их осей,
+                // учитывая половину толщины создаваемой внешней стены.
+                double externalHalfThickness = GetWallTypeThickness(wallType) / 2.0;
+                AdjustExternalCandidatesAtIntersections(candidates, externalHalfThickness);
 
                 // Создаём реальные стены
                 foreach (var cand in candidates)
@@ -820,7 +822,7 @@ namespace Revit_AutoExternalWall.Utilities
         /// без наложения и без зазора.
         /// Работает только с линейными кривыми (Line).
         /// </summary>
-        private static void AdjustExternalCandidatesAtIntersections(List<ExternalWallCandidate> candidates)
+        private static void AdjustExternalCandidatesAtIntersections(List<ExternalWallCandidate> candidates, double externalHalfThickness)
         {
             if (candidates == null || candidates.Count < 2)
                 return;
@@ -889,20 +891,30 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
-                        // ЖЁСТКО стягиваем оба сегмента к точке пересечения:
-                        // выбираем ближайший торец и переносим его ровно в p,
-                        // второй торец остаётся как есть. Так обе внешние стены
-                        // гарантированно сходятся в одной вершине, даже если
-                        // исходные сегменты имели небольшой разрыв.
+                        // Жёстко корректируем оба сегмента около точки пересечения осей.
+                        // Но чтобы новые стены НЕ заходили друг в друга, а доходили только
+                        // до внешнего угла, укорачиваем ось на половину толщины создаваемой
+                        // стены от точки пересечения вдоль направления сегмента.
                         XYZ si = li.GetEndPoint(0);
                         XYZ ei = li.GetEndPoint(1);
                         double dsi = si.DistanceTo(p);
                         double dei = ei.DistanceTo(p);
                         {
-                            XYZ newSi = dsi <= dei ? p : si;
-                            XYZ newEi = dsi <= dei ? ei : p;
-                            if (newSi.DistanceTo(newEi) >= minLength)
-                                li = Line.CreateBound(newSi, newEi);
+                            bool siCloser = dsi <= dei;
+                            XYZ near = siCloser ? si : ei;
+                            XYZ far = siCloser ? ei : si;
+                            XYZ dirAlong = (far - near).Normalize();
+
+                            // точка, где ось бы пересеклась, минус половина толщины новой стены
+                            XYZ newEnd = p - dirAlong * externalHalfThickness;
+                            XYZ newOther = far;
+
+                            if (newEnd.DistanceTo(newOther) >= minLength)
+                            {
+                                li = siCloser
+                                    ? Line.CreateBound(newEnd, newOther)
+                                    : Line.CreateBound(newOther, newEnd);
+                            }
                         }
 
                         XYZ sj = lj.GetEndPoint(0);
@@ -910,10 +922,20 @@ namespace Revit_AutoExternalWall.Utilities
                         double dsj = sj.DistanceTo(p);
                         double dej = ej.DistanceTo(p);
                         {
-                            XYZ newSj = dsj <= dej ? p : sj;
-                            XYZ newEj = dsj <= dej ? ej : p;
-                            if (newSj.DistanceTo(newEj) >= minLength)
-                                lj = Line.CreateBound(newSj, newEj);
+                            bool sjCloser = dsj <= dej;
+                            XYZ near = sjCloser ? sj : ej;
+                            XYZ far = sjCloser ? ej : sj;
+                            XYZ dirAlong = (far - near).Normalize();
+
+                            XYZ newEnd = p - dirAlong * externalHalfThickness;
+                            XYZ newOther = far;
+
+                            if (newEnd.DistanceTo(newOther) >= minLength)
+                            {
+                                lj = sjCloser
+                                    ? Line.CreateBound(newEnd, newOther)
+                                    : Line.CreateBound(newOther, newEnd);
+                            }
                         }
 
                         curves[i] = li;
@@ -1095,8 +1117,11 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
-                // Жёстко стягиваем все кандидаты в вершинах углов (на уровне геометрии).
-                AdjustExternalCandidatesAtIntersections(candidates);
+                // Жёстко стягиваем все кандидаты в вершинах углов (на уровне геометрии),
+                // учитывая половину толщины создаваемой внешней стены, чтобы они
+                // доходили до угла, но не заходили друг в друга.
+                double externalHalfThickness = GetWallTypeThickness(wallType) / 2.0;
+                AdjustExternalCandidatesAtIntersections(candidates, externalHalfThickness);
 
                 // Теперь создаём реальные стены по уже скорректированным кривым.
                 foreach (var cand in candidates)
