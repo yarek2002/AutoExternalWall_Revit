@@ -662,16 +662,11 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
-                        // Если пересечение совпадает с торцом новой или существующей внешней стены — выпуклый угол, не режем
-                        double hitToExistingEnd = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
-                        double hitToCandidateEnd = Math.Min(p.DistanceTo(start), p.DistanceTo(end));
-                        if (hitToExistingEnd < endTol || hitToCandidateEnd < endTol)
-                        {
-                            continue;
-                        }
-
                         // Дальше — та же логика, что в TrimCurveAgainstExisting,
-                        // только без повторного вычисления нормали и толщины
+                        // только без повторного вычисления нормали и толщины.
+                        // В том числе, если пересечение попадает в торец одной из стен,
+                        // мы всё равно «подтягиваем» вторую к этой общей точке,
+                        // чтобы стены сходились точно в вершине угла без взаимного захода.
                         XYZ exDir = (exB - exA).Normalize();
                         XYZ exNormal = new XYZ(-exDir.Y, exDir.X, 0.0);
 
@@ -1081,7 +1076,7 @@ namespace Revit_AutoExternalWall.Utilities
 
                 double existingThickness = GetWallThickness(innerWall);
                 double newThickness = GetWallTypeThickness(wallType);
-                double totalOffsetDistance = (existingThickness/ 2.0) + (newThickness / 2.0);
+                double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
 
                 XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
 
@@ -1100,7 +1095,10 @@ namespace Revit_AutoExternalWall.Utilities
                 // 2) trim against already created external walls
                 if (existingExternalCurves != null && existingExternalCurves.Count > 0)
                 {
-                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, newThickness / 2.0);
+                    // Для внешних стен в узле нам важно, чтобы они сходились точно в точке пересечения,
+                    // а не останавливались на расстоянии половины толщины.
+                    // Поэтому при обрезке по уже созданным внешним стенам не задаём дополнительный offset.
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, 0.0);
                     if (trimmed == null)
                         return null;
                 }
