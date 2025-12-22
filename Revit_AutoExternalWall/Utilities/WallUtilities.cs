@@ -236,6 +236,7 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Extend a line to intersections with other selected walls' extended lines
+        /// Улучшенная версия: обеспечивает правильное расширение стен до точек пересечения на внешних углах
         /// </summary>
         private static Line ExtendLineToIntersections(Line line, Wall currentWall, List<Wall> allSelectedWalls, double levelElevation, double newThickness)
         {
@@ -253,8 +254,9 @@ namespace Revit_AutoExternalWall.Utilities
                 XYZ extendedEnd = end + dir * 1000.0; // Extend 1000 feet in positive direction
                 Line extendedCurrentLine = Line.CreateBound(extendedStart, extendedEnd);
 
-                // Collect intersection points
+                // Collect intersection points and corner points
                 List<double> intersectionParams = new List<double>();
+                List<XYZ> cornerPoints = new List<XYZ>();
                 double startParam = 0.0; // Parameter at original start point
                 double endParam = (end - start).DotProduct(dir); // Parameter at original end point
                 
@@ -324,15 +326,52 @@ namespace Revit_AutoExternalWall.Utilities
                                     XYZ toIntersection = projectedPoint - start;
                                     double t = toIntersection.DotProduct(dir);
                                     
-                                    // Add intersection point - remove strict perpendicular check to allow more intersections
-                                    // Only filter out points that are clearly not on the line (more than 1ft away)
+                                    // Add intersection point - более мягкое условие для пересечений
                                     XYZ perpendicular = toIntersection - (dir * t);
-                                    if (perpendicular.GetLength() < 1.0) // Within 1ft (~300mm) - more lenient
+                                    if (perpendicular.GetLength() < 2.0) // Within 2ft (~600mm) - еще более мягко
                                     {
                                         intersectionParams.Add(t);
+                                        cornerPoints.Add(projectedPoint);
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Дополнительная проверка на углы: добавляем конечные точек других стен как потенциальные углы
+                foreach (var otherWall in allSelectedWalls)
+                {
+                    if (otherWall.Id == currentWall.Id)
+                        continue;
+
+                    if (otherWall.Location is LocationCurve otherLoc && otherLoc.Curve is Line otherLine)
+                    {
+                        XYZ otherStart = otherLine.GetEndPoint(0);
+                        XYZ otherEnd = otherLine.GetEndPoint(1);
+                        XYZ otherAdjustedStart = new XYZ(otherStart.X, otherStart.Y, levelElevation);
+                        XYZ otherAdjustedEnd = new XYZ(otherEnd.X, otherEnd.Y, levelElevation);
+
+                        // Проверяем, близки ли конечные точки других стен к нашей линии
+                        XYZ toOtherStart = otherAdjustedStart - start;
+                        XYZ toOtherEnd = otherAdjustedEnd - start;
+                        double tStart = toOtherStart.DotProduct(dir);
+                        double tEnd = toOtherEnd.DotProduct(dir);
+
+                        // Проверяем перпендикулярное расстояние
+                        XYZ perpStart = toOtherStart - (dir * tStart);
+                        XYZ perpEnd = toOtherEnd - (dir * tEnd);
+
+                        if (perpStart.GetLength() < 0.5) // Within 0.5ft (~150mm)
+                        {
+                            intersectionParams.Add(tStart);
+                            cornerPoints.Add(otherAdjustedStart);
+                        }
+
+                        if (perpEnd.GetLength() < 0.5) // Within 0.5ft (~150mm)
+                        {
+                            intersectionParams.Add(tEnd);
+                            cornerPoints.Add(otherAdjustedEnd);
                         }
                     }
                 }
@@ -352,6 +391,15 @@ namespace Revit_AutoExternalWall.Utilities
                 double originalLength = (end - start).DotProduct(dir);
                 double minParam = Math.Min(0.0, minT); // Allow extension backwards
                 double maxParam = Math.Max(originalLength, maxT); // Allow extension forwards
+
+                // Дополнительное расширение для внешних углов
+                const double cornerExtension = 1.0; // 1ft дополнительное расширение
+                if (cornerPoints.Count > 0)
+                {
+                    // Если есть углы, расширяем немного дальше для надежности
+                    minParam -= cornerExtension;
+                    maxParam += cornerExtension;
+                }
 
                 // Create extended line
                 XYZ newStart = start + dir * minParam;
@@ -994,10 +1042,7 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Trim a candidate wall curve against already created external walls.
-        /// То же, что TrimCurveAgainstExisting, но:
-        /// - если пересечение попадает прямо в торец новой или существующей внешней стены (выпуклый угол),
-        ///   не обрезаем, чтобы стены сходились в вершине;
-        /// - иначе обрезаем по внешней грани (на offset половины толщины).
+        /// Улучшенная версия: правильно обрабатывает внешние углы, позволяя стенам доходить до точек пересечения.
         /// </summary>
         private static Curve TrimCurveAgainstExternalCurves(Curve candidate, IEnumerable<Curve> externalCurves, double trimOffsetFeet = 0.0)
         {
@@ -1008,12 +1053,109 @@ namespace Revit_AutoExternalWall.Utilities
                 return candidate;
 
             const double minLength = 0.5;     // ~150 mm
-            const double endTol = 1e-4;       // ~0.03 mm, считать точку торцем
+            const double cornerTolerance = 0.1; // ~30mm - допуск для определения угла
 
             XYZ start = candLine.GetEndPoint(0);
             XYZ end = candLine.GetEndPoint(1);
             XYZ dir = (end - start).Normalize();
 
+            // Собираем все точки пересечения и конечные точки существующих стен
+            var intersectionPoints = new List<XYZ>();
+            var existingEndPoints = new List<XYZ>();
+
+            foreach (Curve existing in externalCurves)
+            {
+                if (existing == null) continue;
+
+                try
+                {
+                    // Добавляем конечные точки существующих стен
+                    if (existing is Line exLine)
+                    {
+                        existingEndPoints.Add(exLine.GetEndPoint(0));
+                        existingEndPoints.Add(exLine.GetEndPoint(1));
+                    }
+
+                    // Находим пересечения
+                    SetComparisonResult res = candLine.Intersect(existing, out IntersectionResultArray arr);
+                    if (res == SetComparisonResult.Disjoint)
+                        continue;
+
+                    List<XYZ> hits = new List<XYZ>();
+                    if (arr != null && !arr.IsEmpty)
+                    {
+                        for (int i = 0; i < arr.Size; i++)
+                        {
+                            XYZ p = arr.get_Item(i)?.XYZPoint;
+                            if (p != null)
+                                hits.Add(p);
+                        }
+                    }
+
+                    if (hits.Count == 0 && (res == SetComparisonResult.Overlap || res == SetComparisonResult.Subset || res == SetComparisonResult.Superset))
+                    {
+                        for (int i = 0; i < 2; i++)
+                        {
+                            XYZ ep = existing.GetEndPoint(i);
+                            if (ep != null)
+                                hits.Add(ep);
+                        }
+                    }
+
+                    intersectionPoints.AddRange(hits);
+                }
+                catch
+                {
+                    // ignore and continue
+                }
+            }
+
+            // Проверяем, есть ли углы (близкие точки пересечения)
+            bool isCornerAngle = false;
+            XYZ cornerPoint = null;
+
+            foreach (var point in intersectionPoints)
+            {
+                // Проверяем, близка ли эта точка к какой-либо конечной точке существующих стен
+                foreach (var endPoint in existingEndPoints)
+                {
+                    if (point.DistanceTo(endPoint) < cornerTolerance)
+                    {
+                        isCornerAngle = true;
+                        cornerPoint = point;
+                        break;
+                    }
+                }
+                if (isCornerAngle) break;
+            }
+
+            // Если это угол, не обрезаем стену - пусть она доходит до точки пересечения
+            if (isCornerAngle && cornerPoint != null)
+            {
+                // Расширяем стену до точки угла, если она находится за пределами текущей стены
+                double startParam = (cornerPoint - start).DotProduct(dir);
+                double endParam = (cornerPoint - start).DotProduct(dir);
+                
+                XYZ newStart = start;
+                XYZ newEnd = end;
+                
+                // Расширяем в направлении к углу
+                if (startParam < 0)
+                {
+                    newStart = cornerPoint;
+                }
+                else if (endParam > (end - start).GetLength())
+                {
+                    newEnd = cornerPoint;
+                }
+                
+                if (newStart.DistanceTo(newEnd) >= minLength)
+                {
+                    return Line.CreateBound(newStart, newEnd);
+                }
+            }
+
+            // Для не-угловых случаев применяем стандартную логику тримминга
             foreach (Curve existing in externalCurves)
             {
                 if (existing == null) continue;
@@ -1056,16 +1198,19 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
-                        // Если пересечение совпадает с торцом новой или существующей внешней стены — выпуклый угол, не режем
-                        double hitToExistingEnd = Math.Min(p.DistanceTo(exA), p.DistanceTo(exB));
-                        double hitToCandidateEnd = Math.Min(p.DistanceTo(start), p.DistanceTo(end));
-                        if (hitToExistingEnd < endTol || hitToCandidateEnd < endTol)
+                        // Пропускаем точки, которые являются углами
+                        bool isCorner = false;
+                        foreach (var endPoint in existingEndPoints)
                         {
-                            continue;
+                            if (p.DistanceTo(endPoint) < cornerTolerance)
+                            {
+                                isCorner = true;
+                                break;
+                            }
                         }
+                        if (isCorner) continue;
 
-                        // Дальше — та же логика, что в TrimCurveAgainstExisting,
-                        // только без повторного вычисления нормали и толщины
+                        // Стандартная логика тримминга для не-угловых случаев
                         XYZ exDir = (exB - exA).Normalize();
                         XYZ exNormal = new XYZ(-exDir.Y, exDir.X, 0.0);
 
@@ -1161,8 +1306,7 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Create external walls for boundary segments of selected rooms that are adjacent to selected walls.
-        /// Creates complete walls covering all room boundaries, then splits them at midpoints between rooms.
-        /// Returns number of created wall segments after splitting.
+        /// Улучшенная версия: создает стены с правильной обработкой внешних углов.
         /// </summary>
         public static int CreateExternalWallsFromRooms(Document doc, List<Room> selectedRooms, WallType wallType, List<Wall> selectedWalls = null)
         {
@@ -1234,6 +1378,17 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
+                // Для каждой стены собираем все связанные стены для корректной обработки углов
+                Dictionary<ElementId, Wall> allWallsDict = new Dictionary<ElementId, Wall>();
+                foreach (var kvp in segmentsByWall)
+                {
+                    Element boundaryElem = doc.GetElement(kvp.Key);
+                    if (boundaryElem is Wall wall)
+                    {
+                        allWallsDict[kvp.Key] = wall;
+                    }
+                }
+
                 // For each wall, create one external wall covering all boundary curves, then split at room midpoints
                 foreach (var kvp in segmentsByWall)
                 {
@@ -1246,16 +1401,27 @@ namespace Revit_AutoExternalWall.Utilities
                     if (segmentDatas.Count == 0)
                         continue;
 
+                    // Получаем все связанные стены для обработки углов
+                    List<Wall> relatedWalls = new List<Wall>();
+                    foreach (var otherWall in allWallsDict.Values)
+                    {
+                        if (otherWall.Id != innerWall.Id)
+                        {
+                            relatedWalls.Add(otherWall);
+                        }
+                    }
+
                     // Find split points: midpoints between rooms
                     List<double> splitParams = CalculateSplitPoints(innerWall, segmentDatas);
 
-                    // Get curve segments based on split points
+                    // Get curve segments based on split points with corner extension
                     List<Curve> wallSegments = GetWallSegments(innerWall, segmentDatas, splitParams);
 
-                    // Create external walls for each segment
+                    // Create external walls for each segment with improved corner handling
                     foreach (Curve segment in wallSegments)
                     {
-                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves, existingWallCurves);
+                        Wall externalWall = CreateExternalWallAlongCurveSingleWithCorners(
+                            doc, innerWall, segment, wallType, createdExternalCurves, existingWallCurves, relatedWalls);
                         if (externalWall != null)
                         {
                             created++;
@@ -2049,6 +2215,208 @@ namespace Revit_AutoExternalWall.Utilities
             }
 
             return nearestCorner;
+        }
+
+        /// <summary>
+        /// Create an external wall along a specific curve segment with enhanced corner handling
+        /// Улучшенная версия для комнат: правильно обрабатывает внешние углы
+        /// </summary>
+        private static Wall CreateExternalWallAlongCurveSingleWithCorners(Document doc, Wall innerWall, Curve innerCurve, WallType wallType, List<Curve> existingExternalCurves, List<WallCurveInfo> existingWallCurves, List<Wall> relatedWalls)
+        {
+            if (doc == null || innerWall == null || innerCurve == null || wallType == null)
+                return null;
+
+            try
+            {
+                Level level = GetWallLevel(innerWall);
+                double height = GetWallHeight(innerWall);
+                if (level == null)
+                    return null;
+
+                double existingThickness = GetWallThickness(innerWall);
+                double newThickness = GetWallTypeThickness(wallType);
+                double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
+
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+
+                List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
+                if (offsetCurves.Count == 0 || offsetCurves[0] == null)
+                    return null;
+
+                Curve offsetCurve = offsetCurves[0];
+                Curve reversed = offsetCurve.CreateReversed();
+                
+                // 1) trim against existing walls
+                List<WallCurveInfo> existingWalls = existingWallCurves ?? GetExistingWallCurves(doc, innerWall);
+                Curve trimmed = TrimCurveAgainstExisting(reversed, existingWalls, existingThickness / 2.0);
+                if (trimmed == null)
+                    return null;
+
+                // 2) trim against already created external walls with improved corner handling
+                if (existingExternalCurves != null && existingExternalCurves.Count > 0)
+                {
+                    trimmed = TrimCurveAgainstExternalCurves(trimmed, existingExternalCurves, 0.0);
+                    if (trimmed == null)
+                        return null;
+                }
+
+                // 3) дополнительное расширение до углов для комнат
+                if (relatedWalls != null && relatedWalls.Count > 0)
+                {
+                    trimmed = ExtendLineToIntersectionsForRooms(trimmed as Line, innerWall, relatedWalls, level.Elevation, newThickness);
+                    if (trimmed == null)
+                        return null;
+                }
+
+                if (trimmed == null)
+                    return null;
+
+                Wall externalWall = Wall.Create(doc, trimmed, wallType.Id, level.Id, height, 0.0, false, false);
+                if (externalWall != null)
+                {
+                    DisableWallJoins(externalWall);
+                    CopyWallProperties(innerWall, externalWall);
+                    existingExternalCurves?.Add(trimmed);
+                }
+
+                return externalWall;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Extend a line to intersections with other walls for room processing
+        /// Специальная версия для обработки углов в комнатах
+        /// </summary>
+        private static Line ExtendLineToIntersectionsForRooms(Line line, Wall currentWall, List<Wall> relatedWalls, double levelElevation, double newThickness)
+        {
+            if (relatedWalls == null || relatedWalls.Count == 0)
+                return line;
+
+            try
+            {
+                XYZ start = line.GetEndPoint(0);
+                XYZ end = line.GetEndPoint(1);
+                XYZ dir = (end - start).Normalize();
+                
+                // Create extended line (infinite in both directions)
+                XYZ extendedStart = start - dir * 1000.0;
+                XYZ extendedEnd = end + dir * 1000.0;
+                Line extendedCurrentLine = Line.CreateBound(extendedStart, extendedEnd);
+
+                // Collect intersection points
+                List<double> intersectionParams = new List<double>();
+                double startParam = 0.0;
+                double endParam = (end - start).DotProduct(dir);
+                
+                // Add original endpoints as potential limits
+                intersectionParams.Add(startParam);
+                intersectionParams.Add(endParam);
+
+                // Find intersections with related walls
+                foreach (var otherWall in relatedWalls)
+                {
+                    if (otherWall.Id == currentWall.Id)
+                        continue;
+
+                    if (!(otherWall.Location is LocationCurve otherLoc) || !(otherLoc.Curve is Line otherLine))
+                        continue;
+
+                    // Get other wall's center line
+                    XYZ otherStart = otherLine.GetEndPoint(0);
+                    XYZ otherEnd = otherLine.GetEndPoint(1);
+                    XYZ otherDir = (otherEnd - otherStart).Normalize();
+                    
+                    // Project to level elevation
+                    XYZ otherAdjustedStart = new XYZ(otherStart.X, otherStart.Y, levelElevation);
+                    XYZ otherAdjustedEnd = new XYZ(otherEnd.X, otherEnd.Y, levelElevation);
+                    Line otherCenterLine = Line.CreateBound(otherAdjustedStart, otherAdjustedEnd);
+
+                    // Offset other wall's line outward
+                    double otherThickness = GetWallThickness(otherWall);
+                    XYZ otherFaceNormal = GetWallFaceNormal(otherWall);
+                    double otherTotalOffset = (otherThickness / 2.0) + (newThickness / 2.0);
+                    
+                    List<Curve> otherOffsetCurves = GeometryUtilities.OffsetCurve(
+                        otherCenterLine,
+                        otherTotalOffset,
+                        otherFaceNormal
+                    );
+
+                    foreach (var otherOffsetCurve in otherOffsetCurves)
+                    {
+                        if (!(otherOffsetCurve is Line otherOffsetLine))
+                            continue;
+
+                        // Get direction of the offset line
+                        XYZ otherOffsetStart = otherOffsetLine.GetEndPoint(0);
+                        XYZ otherOffsetEnd = otherOffsetLine.GetEndPoint(1);
+                        XYZ otherOffsetDir = (otherOffsetEnd - otherOffsetStart).Normalize();
+
+                        // Extend other line using its own direction
+                        XYZ otherExtStart = otherOffsetStart - otherOffsetDir * 1000.0;
+                        XYZ otherExtEnd = otherOffsetEnd + otherOffsetDir * 1000.0;
+                        Line extendedOtherLine = Line.CreateBound(otherExtStart, otherExtEnd);
+
+                        // Find intersection
+                        SetComparisonResult result = extendedCurrentLine.Intersect(extendedOtherLine, out IntersectionResultArray intersectionArray);
+                        
+                        if (result != SetComparisonResult.Disjoint && intersectionArray != null && !intersectionArray.IsEmpty)
+                        {
+                            for (int i = 0; i < intersectionArray.Size; i++)
+                            {
+                                XYZ intersectionPoint = intersectionArray.get_Item(i)?.XYZPoint;
+                                if (intersectionPoint != null)
+                                {
+                                    // Project to level elevation
+                                    XYZ projectedPoint = new XYZ(intersectionPoint.X, intersectionPoint.Y, levelElevation);
+                                    
+                                    // Calculate parameter along current line
+                                    XYZ toIntersection = projectedPoint - start;
+                                    double t = toIntersection.DotProduct(dir);
+                                    
+                                    // Add intersection point - более мягкое условие
+                                    XYZ perpendicular = toIntersection - (dir * t);
+                                    if (perpendicular.GetLength() < 1.0) // Within 1ft (~300mm)
+                                    {
+                                        intersectionParams.Add(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Find min and max parameters
+                if (intersectionParams.Count == 0)
+                {
+                    // No intersections found, return original line
+                    return line;
+                }
+
+                double minT = intersectionParams.Min();
+                double maxT = intersectionParams.Max();
+
+                // Ensure we extend beyond original endpoints if intersections are found
+                double originalLength = (end - start).DotProduct(dir);
+                double minParam = Math.Min(0.0, minT);
+                double maxParam = Math.Max(originalLength, maxT);
+
+                // Дополнительное расширение для комнат
+                const double roomCornerExtension = 0.5; // 0.5ft для комнат
+                minParam -= roomCornerExtension;
+                maxParam += roomCornerExtension;
+
+                // Create extended line
+                XYZ newStart = start + dir * minParam;
+                XYZ newEnd = start + dir * maxParam;
+                
+                return Line.CreateBound(newStart, newEnd);
+            }
+            catch
+            {
+                return line; // Return original line on error
+            }
         }
 
         #endregion
