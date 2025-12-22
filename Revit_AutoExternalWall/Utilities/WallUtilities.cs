@@ -891,6 +891,40 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
+                        // Определяем, с каким типом угла имеем дело.
+                        // Нас интересуют только ВНЕШНИЕ (выпуклые) углы здания.
+                        // Для этого проверяем, что точка пересечения лежит с "наружной"
+                        // стороны обеих исходных стен (по нормали GetWallFaceNormal).
+                        bool isConvexForI = false;
+                        bool isConvexForJ = false;
+                        try
+                        {
+                            var locI = candidates[i].InnerWall.Location as LocationCurve;
+                            var locJ = candidates[j].InnerWall.Location as LocationCurve;
+                            if (locI?.Curve is Line lineI && locJ?.Curve is Line lineJ)
+                            {
+                                XYZ wi = lineI.GetEndPoint(0);
+                                XYZ wj = lineJ.GetEndPoint(0);
+                                XYZ nI = GetWallFaceNormal(candidates[i].InnerWall);
+                                XYZ nJ = GetWallFaceNormal(candidates[j].InnerWall);
+
+                                double sideI = (p - wi).DotProduct(nI);
+                                double sideJ = (p - wj).DotProduct(nJ);
+
+                                // Если точка пересечения лежит по наружной нормали
+                                // для обеих стен, считаем угол внешним.
+                                isConvexForI = sideI > 0;
+                                isConvexForJ = sideJ > 0;
+                            }
+                        }
+                        catch { }
+
+                        // Внутренние (вогнутые) углы, например в "Г"-образной комнате,
+                        // пропускаем, чтобы не стягивать там внешние стены и не ломать
+                        // внутреннюю геометрию.
+                        if (!isConvexForI || !isConvexForJ)
+                            continue;
+
                         // Жёстко корректируем оба сегмента около точки пересечения осей.
                         // Но чтобы новые стены НЕ заходили друг в друга, а доходили только
                         // до внешнего угла, укорачиваем ось на половину толщины создаваемой
