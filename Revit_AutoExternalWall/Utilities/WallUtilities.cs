@@ -1613,20 +1613,10 @@ namespace Revit_AutoExternalWall.Utilities
                     double startT = splitPoints[i];
                     double endT = splitPoints[i + 1];
 
-                    // Для крайних сегментов берём всю фактическую длину несущей стены:
-                    // первый сегмент начинается в начале LocationCurve,
-                    // последний сегмент оканчивается в конце LocationCurve.
-                    // Так внешние стены будут доходить до реального угла здания,
-                    // а не обрываться на границе помещения или «половине» примыкающей стены.
-                    if (i == 0)
-                    {
-                        startT = 0.0;
-                    }
-                    if (i == splitPoints.Count - 2)
-                    {
-                        endT = wallLength;
-                    }
-
+                    // Здесь мы делим строго по границам комнат (min/max + середины между ними).
+                    // Внешние углы теперь корректируются отдельной функцией
+                    // AdjustExternalCandidatesAtIntersections, поэтому дополнительно
+                    // "вытягивать" крайние сегменты до концов несущей стены не нужно.
                     if (endT > startT + 0.01) // Ignore very small segments
                     {
                         XYZ startPt = wallStart + dir * startT;
