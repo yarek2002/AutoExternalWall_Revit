@@ -875,8 +875,9 @@ namespace Revit_AutoExternalWall.Utilities
                 return 0;
 
             int created = 0;
-            List<Curve> createdExternalCurves = new List<Curve>();
-            List<WallCurveInfo> existingWallCurves = GetExistingWallCurves(doc);
+            // Сначала считаем ВСЕ геометрические кандидаты, потом жёстко стягиваем их в углах,
+            // и только после этого создаём реальные стены. Так мы исключаем влияние порядка обхода.
+            var candidates = new List<ExternalWallCandidate>();
 
             try
             {
@@ -939,7 +940,7 @@ namespace Revit_AutoExternalWall.Utilities
                     }
                 }
 
-                // For each wall, create one external wall covering all boundary curves, then split at room midpoints
+                // Для каждой исходной стены получаем сегменты по комнатам
                 foreach (var kvp in segmentsByWall)
                 {
                     ElementId wallId = kvp.Key;
@@ -957,16 +958,61 @@ namespace Revit_AutoExternalWall.Utilities
                     // Get curve segments based on split points
                     List<Curve> wallSegments = GetWallSegments(innerWall, segmentDatas, splitParams);
 
-                    // Create external walls for each segment.
-                    // Для сценария "по комнатам" специально не отключаем join'ы и не подрезаем
-                    // по существующим/новым стенам — даём Revit самому замкнуть углы по пересечению.
+                    if (wallSegments == null || wallSegments.Count == 0)
+                        continue;
+
+                    // Для каждого сегмента сразу считаем его внешнюю (offset) линию,
+                    // но реальные стены пока НЕ создаём, только накапливаем кандидатов.
+                    double existingThickness = GetWallThickness(innerWall);
+                    double newThickness = GetWallTypeThickness(wallType);
+                    double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
+                    XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+
                     foreach (Curve segment in wallSegments)
                     {
-                        Wall externalWall = CreateExternalWallAlongCurveForRooms(doc, innerWall, segment, wallType);
-                        if (externalWall != null)
+                        if (segment == null || segment.Length < 0.01)
+                            continue;
+
+                        var offsetCurves = GeometryUtilities.OffsetCurve(segment, totalOffsetDistance, wallFaceNormal);
+                        if (offsetCurves == null || offsetCurves.Count == 0)
+                            continue;
+
+                        Curve offset = offsetCurves[0];
+                        if (offset == null || offset.Length < 0.01)
+                            continue;
+
+                        // Разворачиваем, чтобы внутренняя грань новой стены смотрела на исходную.
+                        Curve reversed = offset.CreateReversed();
+
+                        candidates.Add(new ExternalWallCandidate
                         {
-                            created++;
-                        }
+                            InnerWall = innerWall,
+                            Curve = reversed
+                        });
+                    }
+                }
+
+                // Жёстко стягиваем все кандидаты в вершинах углов (на уровне геометрии).
+                AdjustExternalCandidatesAtIntersections(candidates);
+
+                // Теперь создаём реальные стены по уже скорректированным кривым.
+                foreach (var cand in candidates)
+                {
+                    if (cand?.Curve == null || cand.Curve.Length < 0.01 || cand.InnerWall == null)
+                        continue;
+
+                    Level level = GetWallLevel(cand.InnerWall);
+                    double height = GetWallHeight(cand.InnerWall);
+                    if (level == null)
+                        continue;
+
+                    Wall externalWall = Wall.Create(doc, cand.Curve, wallType.Id, level.Id, height, 0.0, false, false);
+                    if (externalWall != null)
+                    {
+                        // В этом сценарии join'ы НЕ отключаем — геометрия уже выровнена в углах,
+                        // а Revit только «оформит» стык.
+                        CopyWallProperties(cand.InnerWall, externalWall);
+                        created++;
                     }
                 }
             }
