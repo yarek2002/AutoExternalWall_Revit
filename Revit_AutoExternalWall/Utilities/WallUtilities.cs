@@ -29,6 +29,16 @@ namespace Revit_AutoExternalWall.Utilities
             public Wall Wall { get; set; }
             public Curve Curve { get; set; }
         }
+
+        /// <summary>
+        /// Кандидат внешней стены, который мы сначала считаем геометрически,
+        /// а затем создаём уже готовые стены одной пачкой.
+        /// </summary>
+        private class ExternalWallCandidate
+        {
+            public Wall InnerWall { get; set; }
+            public Curve Curve { get; set; }
+        }
                       /// <summary>
         /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
         /// </summary>
@@ -600,10 +610,8 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Trim a candidate wall curve against already created external walls.
-        /// То же, что TrimCurveAgainstExisting, но:
-        /// - если пересечение попадает прямо в торец новой или существующей внешней стены (выпуклый угол),
-        ///   не обрезаем, чтобы стены сходились в вершине;
-        /// - иначе обрезаем по внешней грани (на offset половины толщины).
+        /// (В данный момент для сценария "по комнатам" не используется — там
+        /// замыкание углов выполняем отдельной функцией на наборе кандидатов.)
         /// </summary>
         private static Curve TrimCurveAgainstExternalCurves(Curve candidate, IEnumerable<Curve> externalCurves, double trimOffsetFeet = 0.0)
         {
@@ -725,6 +733,102 @@ namespace Revit_AutoExternalWall.Utilities
             }
 
             return candLine;
+        }
+
+        /// <summary>
+        /// Жёстко «склеивает» внешние стены в вершинах углов:
+        /// для каждой пары пересекающихся кандидатов сдвигает ближайший к пересечению торец
+        /// РЕГУЛЯРНО для ОБОИХ сегментов, чтобы они оба заканчивались ровно в точке пересечения
+        /// без наложения и без зазора.
+        /// Работает только с линейными кривыми (Line).
+        /// </summary>
+        private static void AdjustExternalCandidatesAtIntersections(List<ExternalWallCandidate> candidates)
+        {
+            if (candidates == null || candidates.Count < 2)
+                return;
+
+            const double minLength = 0.5; // ~150 мм
+
+            // Локальный массив, чтобы удобнее править кривые по индексу
+            Curve[] curves = candidates.Select(c => c?.Curve).ToArray();
+
+            for (int i = 0; i < curves.Length; ++i)
+            {
+                if (!(curves[i] is Line))
+                    continue;
+
+                for (int j = i + 1; j < curves.Length; ++j)
+                {
+                    if (!(curves[j] is Line))
+                        continue;
+
+                    Line li = curves[i] as Line;
+                    Line lj = curves[j] as Line;
+                    if (li == null || lj == null)
+                        continue;
+
+                    // Параллельные/коллинеарные сегменты трогать не нужно — они и так лежат в одной линии.
+                    XYZ di = (li.GetEndPoint(1) - li.GetEndPoint(0)).Normalize();
+                    XYZ dj = (lj.GetEndPoint(1) - lj.GetEndPoint(0)).Normalize();
+                    if (di.CrossProduct(dj).GetLength() < 1e-6)
+                        continue;
+
+                    try
+                    {
+                        SetComparisonResult res = li.Intersect(lj, out IntersectionResultArray arr);
+                        if (res == SetComparisonResult.Disjoint)
+                            continue;
+
+                        XYZ p = null;
+                        if (arr != null && !arr.IsEmpty)
+                        {
+                            // Берём первую найденную точку пересечения
+                            p = arr.get_Item(0)?.XYZPoint;
+                        }
+                        if (p == null)
+                            continue;
+
+                        // Подтягиваем оба сегмента к этой точке
+                        XYZ si = li.GetEndPoint(0);
+                        XYZ ei = li.GetEndPoint(1);
+                        double dsi = si.DistanceTo(p);
+                        double dei = ei.DistanceTo(p);
+                        if (Math.Min(dsi, dei) < li.Length - minLength)
+                        {
+                            XYZ newSi = dsi <= dei ? p : si;
+                            XYZ newEi = dsi <= dei ? ei : p;
+                            if (newSi.DistanceTo(newEi) >= minLength)
+                                li = Line.CreateBound(newSi, newEi);
+                        }
+
+                        XYZ sj = lj.GetEndPoint(0);
+                        XYZ ej = lj.GetEndPoint(1);
+                        double dsj = sj.DistanceTo(p);
+                        double dej = ej.DistanceTo(p);
+                        if (Math.Min(dsj, dej) < lj.Length - minLength)
+                        {
+                            XYZ newSj = dsj <= dej ? p : sj;
+                            XYZ newEj = dsj <= dej ? ej : p;
+                            if (newSj.DistanceTo(newEj) >= minLength)
+                                lj = Line.CreateBound(newSj, newEj);
+                        }
+
+                        curves[i] = li;
+                        curves[j] = lj;
+                    }
+                    catch
+                    {
+                        // игнорируем ошибки пересечения и двигаемся дальше
+                    }
+                }
+            }
+
+            // Записываем обновлённые кривые обратно в кандидатов
+            for (int k = 0; k < candidates.Count && k < curves.Length; ++k)
+            {
+                if (curves[k] != null)
+                    candidates[k].Curve = curves[k];
+            }
         }
 
         /// <summary>
