@@ -853,10 +853,12 @@ namespace Revit_AutoExternalWall.Utilities
                     // Get curve segments based on split points
                     List<Curve> wallSegments = GetWallSegments(innerWall, segmentDatas, splitParams);
 
-                    // Create external walls for each segment
+                    // Create external walls for each segment.
+                    // Для сценария "по комнатам" специально не отключаем join'ы и не подрезаем
+                    // по существующим/новым стенам — даём Revit самому замкнуть углы по пересечению.
                     foreach (Curve segment in wallSegments)
                     {
-                        Wall externalWall = CreateExternalWallAlongCurveSingle(doc, innerWall, segment, wallType, createdExternalCurves, existingWallCurves);
+                        Wall externalWall = CreateExternalWallAlongCurveForRooms(doc, innerWall, segment, wallType);
                         if (externalWall != null)
                         {
                             created++;
@@ -1116,6 +1118,58 @@ namespace Revit_AutoExternalWall.Utilities
                 return externalWall;
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// Create a single external wall along the curve specifically for the
+        /// "CreateExternalWallsFromRooms" scenario.
+        /// Здесь:
+        /// - не подрезаем по существующим/созданным стенам;
+        /// - не отключаем join'ы, чтобы Revit сам замыкал углы в точке пересечения
+        ///   внешних стен, без зазоров и наложений.
+        /// </summary>
+        private static Wall CreateExternalWallAlongCurveForRooms(Document doc, Wall innerWall, Curve innerCurve, WallType wallType)
+        {
+            if (doc == null || innerWall == null || innerCurve == null || wallType == null)
+                return null;
+
+            try
+            {
+                Level level = GetWallLevel(innerWall);
+                double height = GetWallHeight(innerWall);
+                if (level == null)
+                    return null;
+
+                double existingThickness = GetWallThickness(innerWall);
+                double newThickness = GetWallTypeThickness(wallType);
+                double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
+
+                XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+
+                List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(innerCurve, totalOffsetDistance, wallFaceNormal);
+                if (offsetCurves == null || offsetCurves.Count == 0)
+                    return null;
+
+                Curve offsetCurve = offsetCurves[0];
+                if (offsetCurve == null || offsetCurve.Length < 0.01)
+                    return null;
+
+                Curve reversed = offsetCurve.CreateReversed();
+
+                Wall externalWall = Wall.Create(doc, reversed, wallType.Id, level.Id, height, 0.0, false, false);
+                if (externalWall != null)
+                {
+                    // Не вызываем DisableWallJoins — позволяем Revit автоматически
+                    // оформить пересечения в углах.
+                    CopyWallProperties(innerWall, externalWall);
+                }
+
+                return externalWall;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
