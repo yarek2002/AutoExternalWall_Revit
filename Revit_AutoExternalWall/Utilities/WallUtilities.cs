@@ -811,19 +811,15 @@ namespace Revit_AutoExternalWall.Utilities
                         if (p == null)
                             continue;
 
-                        // Ограничиваем, насколько далеко можно тянуть отрезок до точки пересечения:
-                        // не больше толщины исходной стены, которая «создаёт» эту внешнюю стену.
-                        double maxExtendI = GetWallThickness(candidates[i].InnerWall);
-                        double maxExtendJ = GetWallThickness(candidates[j].InnerWall);
-
-                        // Подтягиваем оба сегмента к этой точке (с укорочением или с небольшим продлением),
-                        // но только если точка пересечения находится не дальше maxExtend* от ближайшего торца.
+                        // ЖЁСТКО стягиваем оба сегмента к точке пересечения:
+                        // выбираем ближайший торец и переносим его ровно в p,
+                        // второй торец остаётся как есть. Так обе внешние стены
+                        // гарантированно сходятся в одной вершине, даже если
+                        // исходные сегменты имели небольшой разрыв.
                         XYZ si = li.GetEndPoint(0);
                         XYZ ei = li.GetEndPoint(1);
                         double dsi = si.DistanceTo(p);
                         double dei = ei.DistanceTo(p);
-                        double minDi = Math.Min(dsi, dei);
-                        if (minDi <= maxExtendI + 1e-3)
                         {
                             XYZ newSi = dsi <= dei ? p : si;
                             XYZ newEi = dsi <= dei ? ei : p;
@@ -835,8 +831,6 @@ namespace Revit_AutoExternalWall.Utilities
                         XYZ ej = lj.GetEndPoint(1);
                         double dsj = sj.DistanceTo(p);
                         double dej = ej.DistanceTo(p);
-                        double minDj = Math.Min(dsj, dej);
-                        if (minDj <= maxExtendJ + 1e-3)
                         {
                             XYZ newSj = dsj <= dej ? p : sj;
                             XYZ newEj = dsj <= dej ? ej : p;
