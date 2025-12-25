@@ -228,6 +228,150 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Create external walls for a set of existing walls, dividing them into segments based on the number of adjacent rooms.
+        /// </summary>
+        public static int CreateSegmentedExternalWalls(Document doc, List<Wall> walls, WallType wallType)
+        {
+            if (doc == null || walls == null || walls.Count == 0 || wallType == null)
+                return 0;
+
+            int created = 0;
+
+            try
+            {
+                foreach (var innerWall in walls)
+                {
+                    if (innerWall == null)
+                        continue;
+
+                    if (!(innerWall.Location is LocationCurve lc) || lc.Curve == null)
+                        continue;
+
+                    Curve baseCurve = lc.Curve;
+                    if (!(baseCurve is Line) || baseCurve.Length < 0.01)
+                        continue; // Only process straight walls
+
+                    // Get wall properties
+                    double existingThickness = GetWallThickness(innerWall);
+                    double newThickness = GetWallTypeThickness(wallType);
+                    double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
+
+                    XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
+                    var offsetCurves = GeometryUtilities.OffsetCurve(baseCurve, totalOffsetDistance, wallFaceNormal);
+                    if (offsetCurves == null || offsetCurves.Count == 0)
+                        continue;
+
+                    Curve offset = offsetCurves[0];
+                    if (offset == null || offset.Length < 0.01)
+                        continue;
+
+                    // Divide the curve into segments based on the number of adjacent rooms
+                    List<Curve> segments = DivideCurveByRooms(offset, innerWall);
+
+                    foreach (var segment in segments)
+                    {
+                        if (segment == null || segment.Length < 0.01)
+                            continue;
+
+                        Level level = GetWallLevel(innerWall);
+                        double height = GetWallHeight(innerWall);
+                        if (level == null)
+                            continue;
+
+                        Wall externalWall = Wall.Create(doc, segment, wallType.Id, level.Id, height, 0.0, false, false);
+                        if (externalWall != null)
+                        {
+                            DisableWallJoins(externalWall);
+                            CopyWallProperties(innerWall, externalWall);
+                            created++;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error creating segmented external walls: {ex.Message}");
+            }
+
+            return created;
+        }
+
+        /// <summary>
+        /// Divide a curve into segments based on the number of adjacent rooms.
+        /// </summary>
+        private static List<Curve> DivideCurveByRooms(Curve curve, Wall wall)
+        {
+            var segments = new List<Curve>();
+
+            try
+            {
+                // Get adjacent rooms
+                var adjacentRooms = GetAdjacentRooms(wall);
+                if (adjacentRooms == null || adjacentRooms.Count == 0)
+                {
+                    segments.Add(curve);
+                    return segments;
+                }
+
+                // Divide the curve into equal segments based on the number of rooms
+                double segmentLength = curve.Length / adjacentRooms.Count;
+                double currentLength = 0.0;
+
+                while (currentLength < curve.Length)
+                {
+                    double nextLength = Math.Min(currentLength + segmentLength, curve.Length);
+                    Curve segment = curve.Extract(currentLength, nextLength);
+                    if (segment != null && segment.Length > 0.01)
+                    {
+                        segments.Add(segment);
+                    }
+                    currentLength = nextLength;
+                }
+            }
+            catch
+            {
+                // If division fails, return the original curve
+                segments.Add(curve);
+            }
+
+            return segments;
+        }
+
+        /// <summary>
+        /// Get the rooms adjacent to a wall.
+        /// </summary>
+        private static List<ElementId> GetAdjacentRooms(Wall wall)
+        {
+            var roomIds = new List<ElementId>();
+
+            try
+            {
+                var spatialElementBoundaryOptions = new SpatialElementBoundaryOptions();
+                var boundaries = wall.get_BoundarySegments(spatialElementBoundaryOptions);
+
+                if (boundaries != null)
+                {
+                    foreach (var boundary in boundaries)
+                    {
+                        foreach (var segment in boundary)
+                        {
+                            if (segment.ElementId != ElementId.InvalidElementId)
+                            {
+                                roomIds.Add(segment.ElementId);
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore errors and return an empty list
+            }
+
+            return roomIds;
+        }
+
+        /// <summary>
         /// Get wall height
         /// </summary>
         private static double GetWallHeight(Wall wall)
