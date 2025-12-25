@@ -297,7 +297,7 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Divide a curve into segments based on the number of adjacent rooms.
+        /// Divide a curve into segments based on the boundaries of adjacent rooms.
         /// </summary>
         private static List<Curve> DivideCurveByRooms(Curve curve, Wall wall)
         {
@@ -315,32 +315,61 @@ namespace Revit_AutoExternalWall.Utilities
                     return segments;
                 }
 
-                // Divide the curve into equal segments based on the number of rooms
-                double segmentLength = curve.Length / adjacentRooms.Count;
-                double currentLength = 0.0;
+                Document doc = wall.Document;
+                var spatialElementBoundaryOptions = new SpatialElementBoundaryOptions();
 
-                while (currentLength < curve.Length)
+                // Iterate through each room and get its boundaries
+                foreach (var roomId in adjacentRooms)
                 {
-                    double nextLength = Math.Min(currentLength + segmentLength, curve.Length);
+                    Room room = doc.GetElement(roomId) as Room;
+                    if (room == null)
+                        continue;
 
-                    // Create a new segment using the curve's parameter space
-                    double startParam = curve.Project(curve.GetEndPoint(0)).Parameter + 
-                                        (currentLength / curve.Length) * 
-                                        (curve.Project(curve.GetEndPoint(1)).Parameter - curve.Project(curve.GetEndPoint(0)).Parameter);
-                    double endParam = curve.Project(curve.GetEndPoint(0)).Parameter + 
-                                      (nextLength / curve.Length) * 
-                                      (curve.Project(curve.GetEndPoint(1)).Parameter - curve.Project(curve.GetEndPoint(0)).Parameter);
+                    var boundaries = room.GetBoundarySegments(spatialElementBoundaryOptions);
+                    if (boundaries == null)
+                        continue;
 
-                    Curve segment = curve.Clone();
-                    segment.MakeBound(startParam, endParam);
-
-                    if (segment != null && segment.Length > 0.01)
+                    foreach (var boundary in boundaries)
                     {
-                        Console.WriteLine($"Segment Created: Start = {segment.GetEndPoint(0)}, End = {segment.GetEndPoint(1)}, Length = {segment.Length}");
-                        segments.Add(segment);
-                    }
+                        foreach (var segment in boundary)
+                        {
+                            Curve boundaryCurve = segment.GetCurve();
+                            if (boundaryCurve == null)
+                                continue;
 
-                    currentLength = nextLength;
+                            // Check intersection between the wall curve and the room boundary curve
+                            IntersectionResultArray results;
+                            SetComparisonResult result = curve.Intersect(boundaryCurve, out results);
+
+                            if (result == SetComparisonResult.Overlap && results != null && results.Size > 0)
+                            {
+                                foreach (IntersectionResult intersection in results)
+                                {
+                                    XYZ intersectionPoint = intersection.XYZPoint;
+
+                                    // Split the wall curve at the intersection point
+                                    double param = curve.Project(intersectionPoint).Parameter;
+                                    Curve segmentCurve = curve.Clone();
+                                    segmentCurve.MakeBound(curve.GetEndParameter(0), param);
+
+                                    if (segmentCurve.Length > 0.01)
+                                    {
+                                        Console.WriteLine($"Segment Created: Start = {segmentCurve.GetEndPoint(0)}, End = {segmentCurve.GetEndPoint(1)}, Length = {segmentCurve.Length}");
+                                        segments.Add(segmentCurve);
+                                    }
+
+                                    // Update the curve to start from the intersection point
+                                    curve.MakeBound(param, curve.GetEndParameter(1));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Add the remaining part of the curve if it exists
+                if (curve.Length > 0.01)
+                {
+                    segments.Add(curve);
                 }
             }
             catch (Exception ex)
