@@ -320,11 +320,23 @@ namespace Revit_AutoExternalWall.Utilities
                 while (currentLength < curve.Length)
                 {
                     double nextLength = Math.Min(currentLength + segmentLength, curve.Length);
-                    Curve segment = curve.Extract(currentLength, nextLength);
+
+                    // Create a new segment using the curve's parameter space
+                    double startParam = curve.Project(curve.GetEndPoint(0)).Parameter + 
+                                        (currentLength / curve.Length) * 
+                                        (curve.Project(curve.GetEndPoint(1)).Parameter - curve.Project(curve.GetEndPoint(0)).Parameter);
+                    double endParam = curve.Project(curve.GetEndPoint(0)).Parameter + 
+                                      (nextLength / curve.Length) * 
+                                      (curve.Project(curve.GetEndPoint(1)).Parameter - curve.Project(curve.GetEndPoint(0)).Parameter);
+
+                    Curve segment = curve.Clone();
+                    segment.MakeBound(startParam, endParam);
+
                     if (segment != null && segment.Length > 0.01)
                     {
                         segments.Add(segment);
                     }
+
                     currentLength = nextLength;
                 }
             }
@@ -346,18 +358,28 @@ namespace Revit_AutoExternalWall.Utilities
 
             try
             {
+                Document doc = wall.Document;
                 var spatialElementBoundaryOptions = new SpatialElementBoundaryOptions();
-                var boundaries = wall.get_BoundarySegments(spatialElementBoundaryOptions);
 
-                if (boundaries != null)
+                // Get the rooms in the document
+                FilteredElementCollector collector = new FilteredElementCollector(doc).OfClass(typeof(SpatialElement));
+                foreach (SpatialElement element in collector)
                 {
-                    foreach (var boundary in boundaries)
+                    if (element is Room room)
                     {
-                        foreach (var segment in boundary)
+                        var boundaries = room.GetBoundarySegments(spatialElementBoundaryOptions);
+                        if (boundaries != null)
                         {
-                            if (segment.ElementId != ElementId.InvalidElementId)
+                            foreach (var boundary in boundaries)
                             {
-                                roomIds.Add(segment.ElementId);
+                                foreach (var segment in boundary)
+                                {
+                                    if (segment.ElementId == wall.Id)
+                                    {
+                                        roomIds.Add(room.Id);
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
