@@ -307,6 +307,8 @@ namespace Revit_AutoExternalWall.Utilities
             {
                 // Get adjacent rooms
                 var adjacentRooms = GetAdjacentRooms(wall);
+                Console.WriteLine($"Wall ID: {wall.Id}, Adjacent Rooms Count: {adjacentRooms.Count}");
+
                 if (adjacentRooms == null || adjacentRooms.Count == 0)
                 {
                     segments.Add(curve);
@@ -334,14 +336,16 @@ namespace Revit_AutoExternalWall.Utilities
 
                     if (segment != null && segment.Length > 0.01)
                     {
+                        Console.WriteLine($"Segment Created: Start = {segment.GetEndPoint(0)}, End = {segment.GetEndPoint(1)}, Length = {segment.Length}");
                         segments.Add(segment);
                     }
 
                     currentLength = nextLength;
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"Error in DivideCurveByRooms: {ex.Message}");
                 // If division fails, return the original curve
                 segments.Add(curve);
             }
@@ -384,9 +388,12 @@ namespace Revit_AutoExternalWall.Utilities
                         }
                     }
                 }
+
+                Console.WriteLine($"GetAdjacentRooms: Found {roomIds.Count} rooms for Wall ID {wall.Id}");
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"Error in GetAdjacentRooms: {ex.Message}");
                 // Ignore errors and return an empty list
             }
 
