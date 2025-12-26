@@ -1831,6 +1831,5 @@ namespace Revit_AutoExternalWall.Utilities
             return Line.CreateBound(new0, new1);
         }
 
-        }
     }
 }
