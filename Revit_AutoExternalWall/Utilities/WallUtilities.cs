@@ -1716,22 +1716,18 @@ namespace Revit_AutoExternalWall.Utilities
     /// Разрезает ОСЬ стены на сегменты по границам помещений.
     /// Boundary-кривые используются ТОЛЬКО для получения параметров,
     /// геометрия сегментов всегда строится строго по оси стены.
-/// <summary>
-/// Делит ОСЬ стены на сегменты ПО КОМНАТАМ.
-/// Одна комната = один сегмент.
-/// </summary>
 private static List<Curve> GetWallSegments(
     Wall wall,
     List<CurveSegmentData> segmentDatas,
-    List<double> _ // не используется
+    List<double> _
 )
 {
     var result = new List<Curve>();
 
-    if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
+    if (!(wall.Location is LocationCurve lc))
         return result;
 
-    if (!(wall.Location is LocationCurve lc) || !(lc.Curve is Line wallLine))
+    if (!(lc.Curve is Line wallLine))
         return result;
 
     XYZ a = wallLine.GetEndPoint(0);
@@ -1739,9 +1735,8 @@ private static List<Curve> GetWallSegments(
     XYZ dir = (b - a).Normalize();
     double wallLen = a.DistanceTo(b);
 
-    // === 1. Интервалы по комнатам ===
-    Dictionary<ElementId, (double min, double max)> roomIntervals =
-        new Dictionary<ElementId, (double, double)>();
+    // 1. собираем точки разреза (ТОЛЬКО внутренние)
+    SortedSet<double> cuts = new SortedSet<double>();
 
     foreach (var sd in segmentDatas)
     {
@@ -1754,40 +1749,37 @@ private static List<Curve> GetWallSegments(
         double t0 = (p0 - a).DotProduct(dir);
         double t1 = (p1 - a).DotProduct(dir);
 
-        double minT = Math.Max(0, Math.Min(wallLen, Math.Min(t0, t1)));
-        double maxT = Math.Max(0, Math.Min(wallLen, Math.Max(t0, t1)));
+        double min = Math.Max(0, Math.Min(wallLen, Math.Min(t0, t1)));
+        double max = Math.Max(0, Math.Min(wallLen, Math.Max(t0, t1)));
 
-        if (roomIntervals.TryGetValue(sd.RoomId, out var old))
-        {
-            roomIntervals[sd.RoomId] =
-                (Math.Min(old.min, minT), Math.Max(old.max, maxT));
-        }
-        else
-        {
-            roomIntervals.Add(sd.RoomId, (minT, maxT));
-        }
+        // ❗ добавляем ТОЛЬКО внутренние точки
+        if (min > 0.01 && min < wallLen - 0.01)
+            cuts.Add(min);
+
+        if (max > 0.01 && max < wallLen - 0.01)
+            cuts.Add(max);
     }
 
-    if (roomIntervals.Count == 0)
-        return result;
+    // 2. ЯВНО добавляем реальные концы стены
+    var ordered = new List<double> { 0.0 };
+    ordered.AddRange(cuts);
+    ordered.Add(wallLen);
 
-    // === 2. Сортируем комнаты вдоль стены ===
-    var ordered = roomIntervals.Values
-        .OrderBy(v => v.min)
-        .ToList();
-
-    // === 3. Строим сегменты ===
+    // 3. строим сегменты
     const double tol = 0.01;
 
-    foreach (var (minT, maxT) in ordered)
+    for (int i = 0; i < ordered.Count - 1; i++)
     {
-        if (maxT - minT < tol)
+        double tA = ordered[i];
+        double tB = ordered[i + 1];
+
+        if (tB - tA < tol)
             continue;
 
-        XYZ p0 = a + dir * minT;
-        XYZ p1 = a + dir * maxT;
+        XYZ pA = a + dir * tA;
+        XYZ pB = a + dir * tB;
 
-        result.Add(Line.CreateBound(p0, p1));
+        result.Add(Line.CreateBound(pA, pB));
     }
 
     return result;
