@@ -125,7 +125,7 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    curve = ExtendToWallEnds(innerWall, curve);
+                    reversedCurve = ExtendToWallEnds(innerWall, reversedCurve);
 
 
                     // Создаём внешнюю стену по всей длине исходной стены без дополнительной подрезки
@@ -1819,6 +1819,65 @@ private static List<Curve> GetWallSegments(
 
             return Line.CreateBound(new0, new1);
         }
+        private static double GetJoinExtensionLength(
+    Wall wall,
+    int endIndex // 0 или 1
+)
+{
+    var joined = JoinGeometryUtils.GetJoinedElements(
+        wall.Document,
+        wall
+    );
+
+    foreach (ElementId id in joined)
+    {
+        if (!(wall.Document.GetElement(id) is Wall other))
+            continue;
+
+        if (!JoinGeometryUtils.AreElementsJoined(wall, other))
+            continue;
+
+        if (JoinGeometryUtils.GetJoinedElementIds(wall.Document, wall)
+            .Count == 0)
+            continue;
+
+        // проверяем, что join именно на этом конце
+        if (!JoinGeometryUtils.IsJoinAllowedAtEnd(wall, endIndex))
+            continue;
+
+        // толщина второй стены
+        return GetWallThickness(other) / 2.0;
+    }
+
+    return 0.0;
+}
+private static Curve ExtendCurveToJoinedWalls(
+    Wall sourceWall,
+    Curve curve
+)
+{
+    if (!(sourceWall.Location is LocationCurve lc))
+        return curve;
+
+    if (!(lc.Curve is Line axis))
+        return curve;
+
+    XYZ a = axis.GetEndPoint(0);
+    XYZ b = axis.GetEndPoint(1);
+    XYZ dir = (b - a).Normalize();
+
+    XYZ p0 = curve.GetEndPoint(0);
+    XYZ p1 = curve.GetEndPoint(1);
+
+    double ext0 = GetJoinExtensionLength(sourceWall, 0);
+    double ext1 = GetJoinExtensionLength(sourceWall, 1);
+
+    XYZ newP0 = p0 - dir * ext0;
+    XYZ newP1 = p1 + dir * ext1;
+
+    return Line.CreateBound(newP0, newP1);
+}
+
 
     }
 }
