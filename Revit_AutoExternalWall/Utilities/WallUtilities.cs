@@ -1718,55 +1718,89 @@ namespace Revit_AutoExternalWall.Utilities
 
 
 
-        /// <summary>
-        /// Get wall curve segments based on split points along the encompassing curve.
-        /// </summary>
-        private static List<Curve> GetWallSegments(Wall wall, List<CurveSegmentData> segmentDatas, List<double> splitParams)
+            /// <summary>
+    /// Разрезает ОСЬ стены на сегменты по границам помещений.
+    /// Boundary-кривые используются ТОЛЬКО для получения параметров,
+    /// геометрия сегментов всегда строится строго по оси стены.
+    /// </summary>
+    private static List<Curve> GetWallSegments(
+        Wall wall,
+        List<CurveSegmentData> segmentDatas,
+        List<double> splitParams // можно передавать пустым
+    )
+    {
+        var result = new List<Curve>();
+
+        if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
+            return result;
+
+        try
         {
-            var result = new List<Curve>();
-            if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
-                return result;
-            try
+            LocationCurve loc = wall.Location as LocationCurve;
+            if (loc == null || !(loc.Curve is Line wallLine))
+                return result; // работаем только с прямыми стенами
+
+            XYZ wallStart = wallLine.GetEndPoint(0);
+            XYZ wallEnd   = wallLine.GetEndPoint(1);
+            XYZ dir       = (wallEnd - wallStart).Normalize();
+            double wallLength = wallStart.DistanceTo(wallEnd);
+
+            // === 1. Собираем ВСЕ точки разреза вдоль оси стены ===
+            // Используем boundary комнат ТОЛЬКО как источник параметров
+            SortedSet<double> cutParams = new SortedSet<double>();
+
+            foreach (var sd in segmentDatas)
             {
-                LocationCurve loc = wall.Location as LocationCurve;
-                if (loc == null || loc.Curve == null || !(loc.Curve is Line wallLine))
-                    return result;
-                XYZ wallStart = wallLine.GetEndPoint(0);
-                XYZ wallEnd = wallLine.GetEndPoint(1);
-                XYZ dir = (wallEnd - wallStart).Normalize();
-                double wallLength = wallStart.DistanceTo(wallEnd);
-                // Собираем все уникальные проекции endpoints boundary-кривых
-                var projectionPoints = new SortedSet<double>();
-                foreach (var segmentData in segmentDatas)
-                {
-                    if (segmentData.Curve == null) continue;
-                    XYZ p0 = segmentData.Curve.GetEndPoint(0);
-                    XYZ p1 = segmentData.Curve.GetEndPoint(1);
-                    double t0 = (p0 - wallStart).DotProduct(dir);
-                    double t1 = (p1 - wallStart).DotProduct(dir);
-                    projectionPoints.Add(t0);
-                    projectionPoints.Add(t1);
-                }
-                // Добавляем концы стены для полноты
-                projectionPoints.Add(0.0); // minT = 0
-                projectionPoints.Add(wallLength); // maxT = длина стены
-                var sortedParams = projectionPoints.ToList();
-                // Создаем сегменты между проекциями (строго по границам комнат)
-                for (int i = 0; i < sortedParams.Count - 1; i++)
-                {
-                    double startT = sortedParams[i];
-                    double endT = sortedParams[i + 1];
-                    if (endT > startT + 0.01)
-                    {
-                        XYZ startPt = wallStart + dir * startT;
-                        XYZ endPt = wallStart + dir * endT;
-                        Curve segment = Line.CreateBound(startPt, endPt);
-                        result.Add(segment);
-                    }
-                }
-                return result;
+                if (sd?.Curve == null)
+                    continue;
+
+                XYZ p0 = sd.Curve.GetEndPoint(0);
+                XYZ p1 = sd.Curve.GetEndPoint(1);
+
+                double t0 = (p0 - wallStart).DotProduct(dir);
+                double t1 = (p1 - wallStart).DotProduct(dir);
+
+                // Ограничиваем проекцию реальной длиной стены
+                t0 = Math.Max(0.0, Math.Min(wallLength, t0));
+                t1 = Math.Max(0.0, Math.Min(wallLength, t1));
+
+                cutParams.Add(t0);
+                cutParams.Add(t1);
             }
-            catch { return result; }
+
+            // === 2. Обязательно добавляем концы стены ===
+            cutParams.Add(0.0);
+            cutParams.Add(wallLength);
+
+            if (cutParams.Count < 2)
+                return result;
+
+            var ordered = cutParams.ToList();
+
+            // === 3. Строим сегменты строго по ОСИ стены ===
+            const double minLength = 0.01; // ~3 мм
+
+            for (int i = 0; i < ordered.Count - 1; i++)
+            {
+                double a = ordered[i];
+                double b = ordered[i + 1];
+
+                if (b - a < minLength)
+                    continue;
+
+                XYZ pA = wallStart + dir * a;
+                XYZ pB = wallStart + dir * b;
+
+                Line segment = Line.CreateBound(pA, pB);
+                result.Add(segment);
+            }
+
+            return result;
         }
+        catch
+        {
+            return result;
+        }
+
     }
 }
