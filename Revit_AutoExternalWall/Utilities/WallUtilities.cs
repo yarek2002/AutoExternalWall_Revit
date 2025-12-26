@@ -1795,6 +1795,7 @@ namespace Revit_AutoExternalWall.Utilities
         {
             return result;
         }
+    }
         private static Curve ExtendToWallEnds(Wall sourceWall, Curve newCurve)
         {
             if (!(sourceWall.Location is LocationCurve lc))
