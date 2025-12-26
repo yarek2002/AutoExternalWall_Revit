@@ -1724,57 +1724,39 @@ namespace Revit_AutoExternalWall.Utilities
         private static List<Curve> GetWallSegments(Wall wall, List<CurveSegmentData> segmentDatas, List<double> splitParams)
         {
             var result = new List<Curve>();
-
             if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
                 return result;
-
             try
             {
                 LocationCurve loc = wall.Location as LocationCurve;
                 if (loc == null || loc.Curve == null || !(loc.Curve is Line wallLine))
                     return result;
-
                 XYZ wallStart = wallLine.GetEndPoint(0);
                 XYZ wallEnd = wallLine.GetEndPoint(1);
                 XYZ dir = (wallEnd - wallStart).Normalize();
                 double wallLength = wallStart.DistanceTo(wallEnd);
-
-                // Find the encompassing min and max from segmentDatas
-                double minT = double.MaxValue;
-                double maxT = double.MinValue;
-
+                // Собираем все уникальные проекции endpoints boundary-кривых
+                var projectionPoints = new SortedSet<double>();
                 foreach (var segmentData in segmentDatas)
                 {
                     if (segmentData.Curve == null) continue;
-
                     XYZ p0 = segmentData.Curve.GetEndPoint(0);
                     XYZ p1 = segmentData.Curve.GetEndPoint(1);
                     double t0 = (p0 - wallStart).DotProduct(dir);
                     double t1 = (p1 - wallStart).DotProduct(dir);
-                    minT = Math.Min(minT, Math.Min(t0, t1));
-                    maxT = Math.Max(maxT, Math.Max(t0, t1));
+                    projectionPoints.Add(t0);
+                    projectionPoints.Add(t1);
                 }
-
-                if (minT >= maxT)
-                    return result;
-
-                // Build split points: include min, splits, max
-                var splitPoints = new List<double> { minT };
-                splitPoints.AddRange(splitParams.Where(p => p > minT && p < maxT));
-                splitPoints.Add(maxT);
-                splitPoints.Sort();
-
-                // Create segments between consecutive split points
-                for (int i = 0; i < splitPoints.Count - 1; i++)
+                // Добавляем концы стены для полноты
+                projectionPoints.Add(0.0); // minT = 0
+                projectionPoints.Add(wallLength); // maxT = длина стены
+                var sortedParams = projectionPoints.ToList();
+                // Создаем сегменты между проекциями (строго по границам комнат)
+                for (int i = 0; i < sortedParams.Count - 1; i++)
                 {
-                    double startT = splitPoints[i];
-                    double endT = splitPoints[i + 1];
-
-                    // Здесь мы делим строго по границам комнат (min/max + середины между ними).
-                    // Внешние углы теперь корректируются отдельной функцией
-                    // AdjustExternalCandidatesAtIntersections, поэтому дополнительно
-                    // "вытягивать" крайние сегменты до концов несущей стены не нужно.
-                    if (endT > startT + 0.01) // Ignore very small segments
+                    double startT = sortedParams[i];
+                    double endT = sortedParams[i + 1];
+                    if (endT > startT + 0.01)
                     {
                         XYZ startPt = wallStart + dir * startT;
                         XYZ endPt = wallStart + dir * endT;
@@ -1782,7 +1764,6 @@ namespace Revit_AutoExternalWall.Utilities
                         result.Add(segment);
                     }
                 }
-
                 return result;
             }
             catch { return result; }
