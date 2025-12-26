@@ -1716,86 +1716,83 @@ namespace Revit_AutoExternalWall.Utilities
     /// Разрезает ОСЬ стены на сегменты по границам помещений.
     /// Boundary-кривые используются ТОЛЬКО для получения параметров,
     /// геометрия сегментов всегда строится строго по оси стены.
-    /// </summary>
-    private static List<Curve> GetWallSegments(
-        Wall wall,
-        List<CurveSegmentData> segmentDatas,
-        List<double> splitParams // можно передавать пустым
-    )
+/// <summary>
+/// Делит ОСЬ стены на сегменты ПО КОМНАТАМ.
+/// Одна комната = один сегмент.
+/// </summary>
+private static List<Curve> GetWallSegments(
+    Wall wall,
+    List<CurveSegmentData> segmentDatas,
+    List<double> _ // не используется
+)
+{
+    var result = new List<Curve>();
+
+    if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
+        return result;
+
+    if (!(wall.Location is LocationCurve lc) || !(lc.Curve is Line wallLine))
+        return result;
+
+    XYZ a = wallLine.GetEndPoint(0);
+    XYZ b = wallLine.GetEndPoint(1);
+    XYZ dir = (b - a).Normalize();
+    double wallLen = a.DistanceTo(b);
+
+    // === 1. Интервалы по комнатам ===
+    Dictionary<ElementId, (double min, double max)> roomIntervals =
+        new Dictionary<ElementId, (double, double)>();
+
+    foreach (var sd in segmentDatas)
     {
-        var result = new List<Curve>();
+        if (sd?.Curve == null)
+            continue;
 
-        if (wall == null || segmentDatas == null || segmentDatas.Count == 0)
-            return result;
+        XYZ p0 = sd.Curve.GetEndPoint(0);
+        XYZ p1 = sd.Curve.GetEndPoint(1);
 
-        try
+        double t0 = (p0 - a).DotProduct(dir);
+        double t1 = (p1 - a).DotProduct(dir);
+
+        double minT = Math.Max(0, Math.Min(wallLen, Math.Min(t0, t1)));
+        double maxT = Math.Max(0, Math.Min(wallLen, Math.Max(t0, t1)));
+
+        if (roomIntervals.TryGetValue(sd.RoomId, out var old))
         {
-            LocationCurve loc = wall.Location as LocationCurve;
-            if (loc == null || !(loc.Curve is Line wallLine))
-                return result; // работаем только с прямыми стенами
-
-            XYZ wallStart = wallLine.GetEndPoint(0);
-            XYZ wallEnd   = wallLine.GetEndPoint(1);
-            XYZ dir       = (wallEnd - wallStart).Normalize();
-            double wallLength = wallStart.DistanceTo(wallEnd);
-
-            // === 1. Собираем ВСЕ точки разреза вдоль оси стены ===
-            // Используем boundary комнат ТОЛЬКО как источник параметров
-            SortedSet<double> cutParams = new SortedSet<double>();
-
-            foreach (var sd in segmentDatas)
-            {
-                if (sd?.Curve == null)
-                    continue;
-
-                XYZ p0 = sd.Curve.GetEndPoint(0);
-                XYZ p1 = sd.Curve.GetEndPoint(1);
-
-                double t0 = (p0 - wallStart).DotProduct(dir);
-                double t1 = (p1 - wallStart).DotProduct(dir);
-
-                // Ограничиваем проекцию реальной длиной стены
-                t0 = Math.Max(0.0, Math.Min(wallLength, t0));
-                t1 = Math.Max(0.0, Math.Min(wallLength, t1));
-
-                cutParams.Add(t0);
-                cutParams.Add(t1);
-            }
-
-            // === 2. Обязательно добавляем концы стены ===
-            cutParams.Add(0.0);
-            cutParams.Add(wallLength);
-
-            if (cutParams.Count < 2)
-                return result;
-
-            var ordered = cutParams.ToList();
-
-            // === 3. Строим сегменты строго по ОСИ стены ===
-            const double minLength = 0.01; // ~3 мм
-
-            for (int i = 0; i < ordered.Count - 1; i++)
-            {
-                double a = ordered[i];
-                double b = ordered[i + 1];
-
-                if (b - a < minLength)
-                    continue;
-
-                XYZ pA = wallStart + dir * a;
-                XYZ pB = wallStart + dir * b;
-
-                Line segment = Line.CreateBound(pA, pB);
-                result.Add(segment);
-            }
-
-            return result;
+            roomIntervals[sd.RoomId] =
+                (Math.Min(old.min, minT), Math.Max(old.max, maxT));
         }
-        catch
+        else
         {
-            return result;
+            roomIntervals.Add(sd.RoomId, (minT, maxT));
         }
     }
+
+    if (roomIntervals.Count == 0)
+        return result;
+
+    // === 2. Сортируем комнаты вдоль стены ===
+    var ordered = roomIntervals.Values
+        .OrderBy(v => v.min)
+        .ToList();
+
+    // === 3. Строим сегменты ===
+    const double tol = 0.01;
+
+    foreach (var (minT, maxT) in ordered)
+    {
+        if (maxT - minT < tol)
+            continue;
+
+        XYZ p0 = a + dir * minT;
+        XYZ p1 = a + dir * maxT;
+
+        result.Add(Line.CreateBound(p0, p1));
+    }
+
+    return result;
+}
+
         private static Curve ExtendToWallEnds(Wall sourceWall, Curve newCurve)
         {
             if (!(sourceWall.Location is LocationCurve lc))
