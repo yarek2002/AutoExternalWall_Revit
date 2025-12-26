@@ -1237,118 +1237,109 @@ namespace Revit_AutoExternalWall.Utilities
             return infos;
         }
 
-        public static int CreateExternalWallsFromRooms(Document doc, List<Room> selectedRooms, WallType wallType, List<Wall> selectedWalls = null)
+ public static int CreateExternalWallsFromRooms(
+    Document doc,
+    List<Room> selectedRooms,
+    WallType wallType,
+    List<Wall> selectedWalls = null)
 {
     if (doc == null || selectedRooms == null || selectedRooms.Count == 0 || wallType == null)
         return 0;
 
     int created = 0;
-    var candidates = new List<ExternalWallCandidate>();
-    var existingWallCurves = GetExistingWallCurves(doc);
 
-    double newThickness = GetWallTypeThickness(wallType);
-    double externalHalfThickness = newThickness / 2.0;
+    // 1. Собираем: стена → все её boundary-сегменты от всех комнат
+    Dictionary<ElementId, List<CurveSegmentData>> segmentsByWall =
+        new Dictionary<ElementId, List<CurveSegmentData>>();
 
-    try
+    SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
+
+    HashSet<ElementId> allowedWalls = null;
+    if (selectedWalls != null && selectedWalls.Count > 0)
+        allowedWalls = new HashSet<ElementId>(selectedWalls.Select(w => w.Id));
+
+    foreach (Room room in selectedRooms)
     {
-        SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
+        var loops = room.GetBoundarySegments(opt);
+        if (loops == null) continue;
 
-        HashSet<ElementId> selectedWallIds = new HashSet<ElementId>();
-        if (selectedWalls != null && selectedWalls.Count > 0)
+        foreach (var loop in loops)
         {
-            foreach (var wall in selectedWalls)
-                selectedWallIds.Add(wall.Id);
-        }
-
-        Dictionary<ElementId, List<CurveSegmentData>> segmentsByWall = new Dictionary<ElementId, List<CurveSegmentData>>();
-
-        foreach (Room room in selectedRooms)
-        {
-            var loops = room.GetBoundarySegments(opt);
-            if (loops == null) continue;
-
-            foreach (var loop in loops)
+            foreach (var seg in loop)
             {
-                foreach (var seg in loop)
+                if (!(doc.GetElement(seg.ElementId) is Wall wall))
+                    continue;
+
+                if (allowedWalls != null && !allowedWalls.Contains(wall.Id))
+                    continue;
+
+                if (!segmentsByWall.TryGetValue(wall.Id, out var list))
                 {
-                    ElementId boundaryId = seg.ElementId;
-                    if (selectedWalls != null && selectedWalls.Count > 0 && !selectedWallIds.Contains(boundaryId))
-                        continue;
-
-                    Element boundaryElem = doc.GetElement(boundaryId);
-                    if (!(boundaryElem is Wall innerWall)) continue;
-
-                    Curve innerCurve = seg.GetCurve();
-                    if (innerCurve == null) continue;
-
-                    CurveSegmentData segmentData = new CurveSegmentData { Curve = innerCurve, RoomId = room.Id };
-
-                    if (!segmentsByWall.TryGetValue(boundaryId, out var list))
-                    {
-                        list = new List<CurveSegmentData>();
-                        segmentsByWall[boundaryId] = list;
-                    }
-                    list.Add(segmentData);
+                    list = new List<CurveSegmentData>();
+                    segmentsByWall[wall.Id] = list;
                 }
+
+                list.Add(new CurveSegmentData
+                {
+                    Curve = seg.GetCurve(),
+                    RoomId = room.Id
+                });
             }
         }
+    }
 
-        foreach (var kvp in segmentsByWall)
+    double newHalf = GetWallTypeThickness(wallType) / 2.0;
+
+    // 2. Обрабатываем КАЖДУЮ стену РОВНО ОДИН РАЗ
+    foreach (var kvp in segmentsByWall)
+    {
+        Wall innerWall = doc.GetElement(kvp.Key) as Wall;
+        if (innerWall == null) continue;
+
+        if (!(innerWall.Location is LocationCurve lc) || !(lc.Curve is Line))
+            continue;
+
+        // 2.1 режем ОСЬ стены
+        List<Curve> axisSegments = GetWallSegments(innerWall, kvp.Value, null);
+        if (axisSegments.Count == 0) continue;
+
+        double offset =
+            GetWallThickness(innerWall) / 2.0 +
+            GetWallTypeThickness(wallType) / 2.0;
+
+        XYZ normal = GetWallFaceNormal(innerWall);
+
+        foreach (Curve axisSeg in axisSegments)
         {
-            ElementId wallId = kvp.Key;
-            Element boundaryElem = doc.GetElement(wallId);
-            if (!(boundaryElem is Wall innerWall)) continue;
+            var offsets = GeometryUtilities.OffsetCurve(axisSeg, offset, normal);
+            if (offsets == null || offsets.Count == 0) continue;
 
-            var segmentDatas = kvp.Value;
-            if (segmentDatas.Count == 0) continue;
+            Curve curve = offsets[0].CreateReversed();
+            if (curve.Length < 0.01) continue;
 
-            List<double> splitParams = CalculateSplitPoints(innerWall, segmentDatas);
-            List<Curve> wallSegments = GetWallSegments(innerWall, segmentDatas, splitParams);
-
-            if (wallSegments == null || wallSegments.Count == 0) continue;
-
-            double existingThickness = GetWallThickness(innerWall);
-            double totalOffsetDistance = (existingThickness / 2.0) + (newThickness / 2.0);
-            XYZ wallFaceNormal = GetWallFaceNormal(innerWall);
-
-            foreach (Curve segment in wallSegments)
-            {
-                if (segment == null || segment.Length < 0.01) continue;
-
-                var offsetCurves = GeometryUtilities.OffsetCurve(segment, totalOffsetDistance, wallFaceNormal);
-                if (offsetCurves == null || offsetCurves.Count == 0) continue;
-
-                Curve offset = offsetCurves[0];
-                if (offset == null || offset.Length < 0.01) continue;
-
-                Curve reversed = offset.CreateReversed();
-                Curve trimmed = TrimCurveAgainstExisting(reversed, existingWallCurves, externalHalfThickness);
-                if (trimmed == null || trimmed.Length < 0.01) continue;
-
-                candidates.Add(new ExternalWallCandidate { InnerWall = innerWall, Curve = trimmed });
-            }
-        }
-
-        AdjustExternalCandidatesAtIntersections(candidates, externalHalfThickness);
-
-        foreach (var cand in candidates)
-        {
-            if (cand?.Curve == null || cand.Curve.Length < 0.01 || cand.InnerWall == null) continue;
-
-            Level level = GetWallLevel(cand.InnerWall);
-            double height = GetWallHeight(cand.InnerWall);
+            Level level = GetWallLevel(innerWall);
+            double height = GetWallHeight(innerWall);
             if (level == null) continue;
 
-            Wall externalWall = Wall.Create(doc, cand.Curve, wallType.Id, level.Id, height, 0.0, false, false);
-            if (externalWall != null)
+            Wall w = Wall.Create(
+                doc,
+                curve,
+                wallType.Id,
+                level.Id,
+                height,
+                0.0,
+                false,
+                false
+            );
+
+            if (w != null)
             {
-                DisableWallJoins(externalWall);
-                CopyWallProperties(cand.InnerWall, externalWall);
+                DisableWallJoins(w);
+                CopyWallProperties(innerWall, w);
                 created++;
             }
         }
     }
-    catch { }
 
     return created;
 }
