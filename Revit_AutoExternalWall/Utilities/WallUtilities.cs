@@ -125,6 +125,9 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
+                    curve = ExtendToWallEnds(innerWall, curve);
+
+
                     // Создаём внешнюю стену по всей длине исходной стены без дополнительной подрезки
                     Wall externalWall = Wall.Create(doc, reversedCurve, wallType.Id, level.Id, height, 0.0, false, false);
 
@@ -1792,6 +1795,41 @@ namespace Revit_AutoExternalWall.Utilities
         {
             return result;
         }
+        private static Curve ExtendToWallEnds(Wall sourceWall, Curve newCurve)
+        {
+            if (!(sourceWall.Location is LocationCurve lc))
+                return newCurve;
+
+            Curve src = lc.Curve;
+
+            XYZ src0 = src.GetEndPoint(0);
+            XYZ src1 = src.GetEndPoint(1);
+
+            XYZ dir = (src1 - src0).Normalize();
+
+            XYZ p0 = newCurve.GetEndPoint(0);
+            XYZ p1 = newCurve.GetEndPoint(1);
+
+            double t0 = (p0 - src0).DotProduct(dir);
+            double t1 = (p1 - src0).DotProduct(dir);
+
+            double srcLen = src0.DistanceTo(src1);
+
+            bool nearStart = t0 < 0.02 || t1 < 0.02;
+            bool nearEnd   = t0 > srcLen - 0.02 || t1 > srcLen - 0.02;
+
+            XYZ new0 = p0;
+            XYZ new1 = p1;
+
+            if (nearStart)
+                new0 = src0 + dir * Math.Min(t0, t1);
+
+            if (nearEnd)
+                new1 = src0 + dir * Math.Max(t0, t1);
+
+            return Line.CreateBound(new0, new1);
+        }
+
         }
     }
 }
