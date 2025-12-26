@@ -1801,6 +1801,6 @@ namespace Revit_AutoExternalWall.Utilities
         {
             return result;
         }
-
+        }
     }
 }
