@@ -1785,40 +1785,27 @@ private static List<Curve> GetWallSegments(
     return result;
 }
 
-        private static Curve ExtendToWallEnds(Wall sourceWall, Curve newCurve)
-        {
-            if (!(sourceWall.Location is LocationCurve lc))
-                return newCurve;
+private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
+{
+    if (!(curve is Line line))
+        return curve;
 
-            Curve src = lc.Curve;
+    if (!(sourceWall.Location is LocationCurve lc))
+        return curve;
 
-            XYZ src0 = src.GetEndPoint(0);
-            XYZ src1 = src.GetEndPoint(1);
+    if (!(lc.Curve is Line axis))
+        return curve;
 
-            XYZ dir = (src1 - src0).Normalize();
+    XYZ dir = (axis.GetEndPoint(1) - axis.GetEndPoint(0)).Normalize();
 
-            XYZ p0 = newCurve.GetEndPoint(0);
-            XYZ p1 = newCurve.GetEndPoint(1);
+    double halfWidth = GetWallThickness(sourceWall) / 2.0;
 
-            double t0 = (p0 - src0).DotProduct(dir);
-            double t1 = (p1 - src0).DotProduct(dir);
+    XYZ p0 = line.GetEndPoint(0) - dir * halfWidth;
+    XYZ p1 = line.GetEndPoint(1) + dir * halfWidth;
 
-            double srcLen = src0.DistanceTo(src1);
+    return Line.CreateBound(p0, p1);
+}
 
-            bool nearStart = t0 < 0.02 || t1 < 0.02;
-            bool nearEnd   = t0 > srcLen - 0.02 || t1 > srcLen - 0.02;
-
-            XYZ new0 = p0;
-            XYZ new1 = p1;
-
-            if (nearStart)
-                new0 = src0 + dir * Math.Min(t0, t1);
-
-            if (nearEnd)
-                new1 = src0 + dir * Math.Max(t0, t1);
-
-            return Line.CreateBound(new0, new1);
-        }
         private static double GetJoinExtensionLength(
     Wall wall,
     int endIndex // 0 или 1
@@ -1834,15 +1821,12 @@ private static List<Curve> GetWallSegments(
         if (!(wall.Document.GetElement(id) is Wall other))
             continue;
 
-        if (!JoinGeometryUtils.AreElementsJoined(wall, other))
+        // Updated to provide the secondElement parameter
+        if (!JoinGeometryUtils.AreElementsJoined(wall.Document, wall, other))
             continue;
 
-        if (JoinGeometryUtils.GetJoinedElementIds(wall.Document, wall)
-            .Count == 0)
-            continue;
-
-        // проверяем, что join именно на этом конце
-        if (!JoinGeometryUtils.IsJoinAllowedAtEnd(wall, endIndex))
+        // Updated logic to check join condition
+        if (!JoinGeometryUtils.IsCuttingElementInJoin(wall.Document, wall, other))
             continue;
 
         // толщина второй стены
