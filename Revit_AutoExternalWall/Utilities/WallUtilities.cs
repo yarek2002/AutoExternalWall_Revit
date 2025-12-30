@@ -1322,6 +1322,10 @@ namespace Revit_AutoExternalWall.Utilities
                 double segLen = segStart.DistanceTo(segEnd);
                 double wallLen = wallLine.Length;
 
+                // Базовый лог по сегменту оси
+                Console.WriteLine(
+                    $"EXT wall {wall.Id}: segLen={segLen:F3}, wallLen={wallLen:F3}");
+
                 // Проверяем, является ли сегмент коротким и находится ли он у края
                 if (segLen >= wallLen * 0.25)
                     return segment; // не короткий
@@ -1335,6 +1339,9 @@ namespace Revit_AutoExternalWall.Utilities
 
                 bool nearStart = tStart < wallLen * 0.1;
                 bool nearEnd = tEnd > wallLen * 0.9;
+
+                Console.WriteLine(
+                    $"EXT wall {wall.Id}: nearStart={nearStart}, nearEnd={nearEnd}, tStart={tStart:F3}, tEnd={tEnd:F3}");
 
                 if (!nearStart && !nearEnd)
                     return segment; // не у края
@@ -1382,6 +1389,13 @@ namespace Revit_AutoExternalWall.Utilities
                     double tCorner = (bestCorner - wallStart).DotProduct(wallDir);
                     tCorner = Math.Max(0, Math.Min(wallLen, tCorner));
                     XYZ newPoint = wallStart + wallDir * tCorner;
+
+                    double newLen = extendFromStart
+                        ? newPoint.DistanceTo(segEnd)
+                        : segStart.DistanceTo(newPoint);
+
+                    Console.WriteLine(
+                        $"EXT APPLIED wall {wall.Id}: fromStart={extendFromStart}, oldLen={segLen:F3}, newLen={newLen:F3}, tCorner={tCorner:F3}");
 
                     if (extendFromStart)
                         return Line.CreateBound(newPoint, segEnd);
@@ -1448,7 +1462,7 @@ namespace Revit_AutoExternalWall.Utilities
     double newHalf = GetWallTypeThickness(wallType) / 2.0;
 
     // 2. Обрабатываем КАЖДУЮ стену РОВНО ОДИН РАЗ
-    foreach (var kvp in segmentsByWall)
+        foreach (var kvp in segmentsByWall)
     {
         Wall innerWall = doc.GetElement(kvp.Key) as Wall;
         if (innerWall == null) continue;
@@ -1468,6 +1482,9 @@ namespace Revit_AutoExternalWall.Utilities
 
         foreach (Curve axisSeg in axisSegments)
         {
+            Console.WriteLine(
+                $"AXIS wall {innerWall.Id}: segLen={axisSeg.Length:F3}");
+
             // Растягиваем короткие сегменты у краёв до внешней точки пересечения с соседними стенами
             Curve extendedSeg = ExtendSegmentToExternalCorner(doc, innerWall, axisSeg);
             
