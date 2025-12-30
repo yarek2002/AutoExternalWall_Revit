@@ -1780,22 +1780,25 @@ private static List<Curve> GetWallSegments(
 
         // Для коротких "огрызков" у углов увеличиваем длину вдоль оси,
         // жёстко доводя до самого конца стены, чтобы не оставался зазор.
-        if (segParamLen > 0 && segParamLen < wallLen * 0.25)
-        {
-            bool isFirst = (i == 0);
-            bool isLast  = (i == ordered.Count - 2);
+        // Проверяем по позиции на стене, а не по индексу в списке.
+        const double edgeThreshold = 0.1; // 10% от длины стены считаем краем
+        bool nearStart = tA < wallLen * edgeThreshold;
+        bool nearEnd = tB > wallLen * (1.0 - edgeThreshold);
+        bool isShort = segParamLen > 0 && segParamLen < wallLen * 0.25;
 
-            if (isFirst)
+        if (isShort && (nearStart || nearEnd))
+        {
+            if (nearStart && tA > tol)
             {
-                // Отрезок у начала стены: тянем точно до 0.
+                // Отрезок близко к началу стены: тянем точно до 0.
                 tA = 0.0;
             }
-            else if (isLast)
+            
+            if (nearEnd && tB < wallLen - tol)
             {
-                // Отрезок у конца стены: тянем точно до wallLen.
+                // Отрезок близко к концу стены: тянем точно до wallLen.
                 tB = wallLen;
             }
-            // Внутренние короткие сегменты посередине не трогаем.
 
             if (tB - tA < tol)
                 continue;
