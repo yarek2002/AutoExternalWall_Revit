@@ -1776,6 +1776,27 @@ private static List<Curve> GetWallSegments(
         if (tB - tA < tol)
             continue;
 
+        double segParamLen = tB - tA;
+
+        // Для коротких "огрызков" у углов тупо увеличиваем длину вдоль оси в 2 раза,
+        // но жёстко ограничиваем внутри исходной стены [0, wallLen],
+        // чтобы не вылезти за реальные концы.
+        if (segParamLen > 0 && segParamLen < wallLen * 0.25)
+        {
+            double center = (tA + tB) * 0.5;
+            double half   = segParamLen * 0.5;
+            double newHalf = half * 2.0; // "умножаем на два"
+
+            double newTA = center - newHalf;
+            double newTB = center + newHalf;
+
+            tA = Math.Max(0.0, newTA);
+            tB = Math.Min(wallLen, newTB);
+
+            if (tB - tA < tol)
+                continue;
+        }
+
         XYZ pA = a + dir * tA;
         XYZ pB = a + dir * tB;
 
