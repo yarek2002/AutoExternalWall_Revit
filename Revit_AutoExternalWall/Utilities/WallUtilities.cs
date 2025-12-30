@@ -1328,7 +1328,11 @@ namespace Revit_AutoExternalWall.Utilities
 
                 // Проверяем, является ли сегмент коротким и находится ли он у края
                 if (segLen >= wallLen * 0.25)
+                {
+                    Console.WriteLine(
+                        $"EXT wall {wall.Id}: skip (not short) segLen={segLen:F3}, wallLen={wallLen:F3}");
                     return segment; // не короткий
+                }
 
                 XYZ wallStart = wallLine.GetEndPoint(0);
                 XYZ wallEnd = wallLine.GetEndPoint(1);
@@ -1344,7 +1348,11 @@ namespace Revit_AutoExternalWall.Utilities
                     $"EXT wall {wall.Id}: nearStart={nearStart}, nearEnd={nearEnd}, tStart={tStart:F3}, tEnd={tEnd:F3}");
 
                 if (!nearStart && !nearEnd)
+                {
+                    Console.WriteLine(
+                        $"EXT wall {wall.Id}: skip (not near edge) tStart={tStart:F3}, tEnd={tEnd:F3}");
                     return segment; // не у края
+                }
 
                 // Ищем пересекающиеся стены
                 var existingWalls = GetExistingWallCurves(doc, wall);
@@ -1402,6 +1410,9 @@ namespace Revit_AutoExternalWall.Utilities
                     else
                         return Line.CreateBound(segStart, newPoint);
                 }
+
+                Console.WriteLine(
+                    $"EXT wall {wall.Id}: skip (no external corner) segLen={segLen:F3}, nearStart={nearStart}, nearEnd={nearEnd}");
             }
             catch { }
 
