@@ -1240,6 +1240,160 @@ namespace Revit_AutoExternalWall.Utilities
             return infos;
         }
 
+        /// <summary>
+        /// Вычисляет внешнюю точку пересечения двух стен (точку пересечения их внешних граней).
+        /// Возвращает null, если стены не пересекаются или это внутренний угол.
+        /// </summary>
+        private static XYZ GetExternalCornerPoint(Wall wall1, Wall wall2)
+        {
+            if (wall1 == null || wall2 == null || wall1.Id == wall2.Id)
+                return null;
+
+            try
+            {
+                if (!(wall1.Location is LocationCurve lc1) || !(lc1.Curve is Line line1))
+                    return null;
+                if (!(wall2.Location is LocationCurve lc2) || !(lc2.Curve is Line line2))
+                    return null;
+
+                // Находим точку пересечения осей стен
+                SetComparisonResult res = line1.Intersect(line2, out IntersectionResultArray arr);
+                if (res == SetComparisonResult.Disjoint || arr == null || arr.IsEmpty)
+                    return null;
+
+                XYZ axisIntersection = arr.get_Item(0)?.XYZPoint;
+                if (axisIntersection == null)
+                    return null;
+
+                // Получаем нормали (направление наружу) для обеих стен
+                XYZ normal1 = GetWallFaceNormal(wall1);
+                XYZ normal2 = GetWallFaceNormal(wall2);
+
+                // Проверяем, что это внешний (выпуклый) угол:
+                // точка пересечения должна лежать по наружной стороне обеих стен
+                XYZ p1 = line1.GetEndPoint(0);
+                XYZ p2 = line2.GetEndPoint(0);
+                double side1 = (axisIntersection - p1).DotProduct(normal1);
+                double side2 = (axisIntersection - p2).DotProduct(normal2);
+
+                if (side1 <= 0 || side2 <= 0)
+                    return null; // это внутренний угол, пропускаем
+
+                // Вычисляем внешнюю точку пересечения:
+                // сдвигаем точку пересечения осей наружу на половину толщины каждой стены
+                double halfThick1 = GetWallThickness(wall1) / 2.0;
+                double halfThick2 = GetWallThickness(wall2) / 2.0;
+
+                // Направление биссектрисы угла наружу
+                XYZ bisector = (normal1 + normal2).Normalize();
+                
+                // Расстояние от оси до внешнего угла зависит от угла между стенами
+                // Упрощённо: используем максимальную толщину для сдвига
+                double maxHalfThick = Math.Max(halfThick1, halfThick2);
+                
+                // Более точный расчёт: расстояние до внешнего угла = halfThick / sin(angle/2)
+                // Для простоты используем эмпирический коэффициент
+                double externalOffset = maxHalfThick * 1.5; // примерная компенсация угла
+
+                XYZ externalPoint = axisIntersection + bisector * externalOffset;
+                return externalPoint;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Растягивает сегмент оси стены до внешней точки пересечения с другой стеной, если сегмент короткий и находится у края.
+        /// </summary>
+        private static Curve ExtendSegmentToExternalCorner(Document doc, Wall wall, Curve segment)
+        {
+            if (wall == null || segment == null || !(segment is Line segLine))
+                return segment;
+
+            try
+            {
+                if (!(wall.Location is LocationCurve wallLc) || !(wallLc.Curve is Line wallLine))
+                    return segment;
+
+                XYZ segStart = segLine.GetEndPoint(0);
+                XYZ segEnd = segLine.GetEndPoint(1);
+                double segLen = segStart.DistanceTo(segEnd);
+                double wallLen = wallLine.Length;
+
+                // Проверяем, является ли сегмент коротким и находится ли он у края
+                if (segLen >= wallLen * 0.25)
+                    return segment; // не короткий
+
+                XYZ wallStart = wallLine.GetEndPoint(0);
+                XYZ wallEnd = wallLine.GetEndPoint(1);
+                XYZ wallDir = (wallEnd - wallStart).Normalize();
+
+                double tStart = (segStart - wallStart).DotProduct(wallDir);
+                double tEnd = (segEnd - wallStart).DotProduct(wallDir);
+
+                bool nearStart = tStart < wallLen * 0.1;
+                bool nearEnd = tEnd > wallLen * 0.9;
+
+                if (!nearStart && !nearEnd)
+                    return segment; // не у края
+
+                // Ищем пересекающиеся стены
+                var existingWalls = GetExistingWallCurves(doc, wall);
+                XYZ bestCorner = null;
+                double bestDist = double.MaxValue;
+                bool extendFromStart = nearStart;
+
+                foreach (var wallInfo in existingWalls)
+                {
+                    XYZ corner = GetExternalCornerPoint(wall, wallInfo.Wall);
+                    if (corner == null)
+                        continue;
+
+                    // Проецируем точку угла на ось стены
+                    double tCorner = (corner - wallStart).DotProduct(wallDir);
+                    
+                    if (nearStart && tCorner < tStart && tCorner >= -wallLen * 0.1)
+                    {
+                        double dist = Math.Abs(tCorner - tStart);
+                        if (dist < bestDist)
+                        {
+                            bestDist = dist;
+                            bestCorner = corner;
+                            extendFromStart = true;
+                        }
+                    }
+                    else if (nearEnd && tCorner > tEnd && tCorner <= wallLen * 1.1)
+                    {
+                        double dist = Math.Abs(tCorner - tEnd);
+                        if (dist < bestDist)
+                        {
+                            bestDist = dist;
+                            bestCorner = corner;
+                            extendFromStart = false;
+                        }
+                    }
+                }
+
+                if (bestCorner != null)
+                {
+                    // Проецируем внешнюю точку угла на ось стены
+                    double tCorner = (bestCorner - wallStart).DotProduct(wallDir);
+                    tCorner = Math.Max(0, Math.Min(wallLen, tCorner));
+                    XYZ newPoint = wallStart + wallDir * tCorner;
+
+                    if (extendFromStart)
+                        return Line.CreateBound(newPoint, segEnd);
+                    else
+                        return Line.CreateBound(segStart, newPoint);
+                }
+            }
+            catch { }
+
+            return segment;
+        }
+
  public static int CreateExternalWallsFromRooms(
     Document doc,
     List<Room> selectedRooms,
@@ -1314,7 +1468,10 @@ namespace Revit_AutoExternalWall.Utilities
 
         foreach (Curve axisSeg in axisSegments)
         {
-            var offsets = GeometryUtilities.OffsetCurve(axisSeg, offset, normal);
+            // Растягиваем короткие сегменты у краёв до внешней точки пересечения с соседними стенами
+            Curve extendedSeg = ExtendSegmentToExternalCorner(doc, innerWall, axisSeg);
+            
+            var offsets = GeometryUtilities.OffsetCurve(extendedSeg, offset, normal);
             if (offsets == null || offsets.Count == 0) continue;
 
             Curve curve = offsets[0].CreateReversed();
@@ -1765,50 +1922,22 @@ private static List<Curve> GetWallSegments(
     ordered.AddRange(cuts);
     ordered.Add(wallLen);
 
-    // 3. строим сегменты
-    const double tol = 0.01;
+        // 3. строим сегменты — без эвристик, строго по точкам разреза
+        const double tol = 0.01;
 
-    for (int i = 0; i < ordered.Count - 1; i++)
-    {
-        double tA = ordered[i];
-        double tB = ordered[i + 1];
-
-        if (tB - tA < tol)
-            continue;
-
-        double segParamLen = tB - tA;
-
-        // Для коротких "огрызков" у углов увеличиваем длину вдоль оси,
-        // жёстко доводя до самого конца стены, чтобы не оставался зазор.
-        // Проверяем по позиции на стене, а не по индексу в списке.
-        const double edgeThreshold = 0.1; // 10% от длины стены считаем краем
-        bool nearStart = tA < wallLen * edgeThreshold;
-        bool nearEnd = tB > wallLen * (1.0 - edgeThreshold);
-        bool isShort = segParamLen > 0 && segParamLen < wallLen * 0.25;
-
-        if (isShort && (nearStart || nearEnd))
+        for (int i = 0; i < ordered.Count - 1; i++)
         {
-            if (nearStart && tA > tol)
-            {
-                // Отрезок близко к началу стены: тянем точно до 0.
-                tA = 0.0;
-            }
-            
-            if (nearEnd && tB < wallLen - tol)
-            {
-                // Отрезок близко к концу стены: тянем точно до wallLen.
-                tB = wallLen;
-            }
+            double tA = ordered[i];
+            double tB = ordered[i + 1];
 
             if (tB - tA < tol)
                 continue;
+
+            XYZ pA = a + dir * tA;
+            XYZ pB = a + dir * tB;
+
+            result.Add(Line.CreateBound(pA, pB));
         }
-
-        XYZ pA = a + dir * tA;
-        XYZ pB = a + dir * tB;
-
-        result.Add(Line.CreateBound(pA, pB));
-    }
 
     return result;
 }
