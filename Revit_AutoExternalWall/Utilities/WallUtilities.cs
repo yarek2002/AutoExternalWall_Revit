@@ -1779,8 +1779,7 @@ private static List<Curve> GetWallSegments(
         double segParamLen = tB - tA;
 
         // Для коротких "огрызков" у углов увеличиваем длину вдоль оси,
-        // но только в сторону ближайшего конца стены, чтобы не залезать
-        // в соседний сегмент/комнату.
+        // жёстко доводя до самого конца стены, чтобы не оставался зазор.
         if (segParamLen > 0 && segParamLen < wallLen * 0.25)
         {
             bool isFirst = (i == 0);
@@ -1788,20 +1787,15 @@ private static List<Curve> GetWallSegments(
 
             if (isFirst)
             {
-                // Отрезок у начала стены: тянем его ТОЛЬКО к 0,
-                // на величину, равную его текущей длине (≈×2 по длине).
-                double newTA = Math.Max(0.0, tA - segParamLen);
-                tA = newTA;
+                // Отрезок у начала стены: тянем точно до 0.
+                tA = 0.0;
             }
             else if (isLast)
             {
-                // Отрезок у конца стены: тянем его ТОЛЬКО к wallLen,
-                // тоже на segParamLen.
-                double newTB = Math.Min(wallLen, tB + segParamLen);
-                tB = newTB;
+                // Отрезок у конца стены: тянем точно до wallLen.
+                tB = wallLen;
             }
-            // Для внутренних коротких кусочков середины стены ничего не делаем,
-            // чтобы не наползали друг на друга.
+            // Внутренние короткие сегменты посередине не трогаем.
 
             if (tB - tA < tol)
                 continue;
