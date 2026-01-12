@@ -87,33 +87,28 @@ namespace Revit_AutoExternalWall
                     // Place external walls
                     int wallsCreated = 0;
 
-                    // Create walls based on selected walls only if no rooms were selected.
-                    // Используем специальный метод, который учитывает взаимное пересечение
-                    // выбранных стен, чтобы внешние стены сходились в одной точке и угол
-                    // оставался «открытым».
-                    if (selectedRooms == null || selectedRooms.Count == 0 && selectedWalls.Count > 0)
-                    {
-                        try
-                        {
-                            wallsCreated += WallUtilities.CreateExternalWallsFromExistingWalls(doc, selectedWalls, externalWallType);
-                        }
-                        catch (Exception ex)
-                        {
-                            message += $"Error processing walls: {ex.Message}\n";
-                        }
-                    }
-
-                    // Create walls based on selected rooms (use room boundaries)
+                    // Создаем внешние стены для выбранного помещения
                     if (selectedRooms.Count > 0)
                     {
+                        if (selectedRooms.Count > 1)
+                        {
+                            TaskDialog.Show("Warning", "Пожалуйста, выберите только одно помещение для тестирования.");
+                            return Result.Cancelled;
+                        }
+
                         try
                         {
-                            wallsCreated += WallUtilities.CreateExternalWallsFromRooms(doc, selectedRooms, externalWallType, selectedWalls);
+                            wallsCreated += WallUtilities.CreateExternalWallsFromSingleRoom(doc, selectedRooms[0], externalWallType);
                         }
                         catch (Exception ex)
                         {
-                            message += $"Error processing rooms: {ex.Message}\n";
+                            message += $"Error processing room: {ex.Message}\n";
                         }
+                    }
+                    else
+                    {
+                        TaskDialog.Show("Info", "Пожалуйста, выберите помещение для создания внешних стен.");
+                        return Result.Cancelled;
                     }
 
                     trans.Commit();
