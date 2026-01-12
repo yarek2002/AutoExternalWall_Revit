@@ -1592,11 +1592,21 @@ private static Curve ExtendCurveToJoinedWalls(
                     return false;
 
                 SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
+                LocationCurve lc = wall.Location as LocationCurve;
+                if (lc == null || !(lc.Curve is Line axisLine))
+                    return false;
+
+                XYZ axisStart = axisLine.GetEndPoint(0);
+                XYZ axisEnd = axisLine.GetEndPoint(1);
+                XYZ axisDir = (axisEnd - axisStart).Normalize();
+                XYZ wallNormal = GetWallFaceNormal(wall);
+
+                bool hasPos = false;
+                bool hasNeg = false;
+
                 var rooms = new FilteredElementCollector(doc)
                     .OfClass(typeof(SpatialElement))
                     .OfType<Room>();
-
-                HashSet<ElementId> touchingRooms = new HashSet<ElementId>();
 
                 foreach (var room in rooms)
                 {
@@ -1606,12 +1616,21 @@ private static Curve ExtendCurveToJoinedWalls(
                     {
                         foreach (var seg in loop)
                         {
-                            if (seg.ElementId == wall.Id)
-                            {
-                                touchingRooms.Add(room.Id);
-                                if (touchingRooms.Count >= 2)
-                                    return true;
-                            }
+                            if (seg.ElementId != wall.Id) continue;
+
+                            Curve c = seg.GetCurve();
+                            if (c == null) continue;
+                            // берём середину граничного сегмента комнаты
+                            XYZ mid = c.Evaluate(0.5, true);
+                            // проекция на ось для плоскости
+                            XYZ proj = axisLine.Project(mid)?.XYZPoint ?? axisLine.Evaluate(0.5, true);
+                            double side = (mid - proj).DotProduct(wallNormal);
+
+                            if (side > 1e-6) hasPos = true;
+                            else if (side < -1e-6) hasNeg = true;
+
+                            if (hasPos && hasNeg)
+                                return true;
                         }
                     }
                 }
