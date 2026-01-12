@@ -1471,7 +1471,7 @@ private static Curve ExtendCurveToJoinedWalls(
                     // Итого: innerThickness + externalThickness / 2
                     double innerThickness = GetWallThickness(innerWall);
                     double externalThickness = GetWallTypeThickness(wallType);
-                    double offsetDistance = innerThickness / 2.0;
+                    double offsetDistance = innerThickness + (externalThickness / 2.0);
 
                     Log(doc, $"Смещение: {offsetDistance:F3} (толщина внутренней: {innerThickness:F3}, внешней: {externalThickness:F3})");
 
