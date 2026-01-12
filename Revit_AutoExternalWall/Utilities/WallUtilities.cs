@@ -1489,6 +1489,14 @@ private static Curve ExtendCurveToJoinedWalls(
 
                     // Разделяем стену на сегменты по границам помещений (только для определения помещений),
                     // но строим ОДНУ внешнюю стену по всей длине исходной стены.
+                    // Если стена граничит с помещениями с обеих сторон — пропускаем
+                    var distinctRooms = segmentDataList.Select(s => s.Room?.Id).Where(id => id != null).Distinct().ToList();
+                    if (distinctRooms.Count >= 2)
+                    {
+                        Log(doc, $"Стена {innerWall.Id} граничит с несколькими помещениями, пропуск");
+                        continue;
+                    }
+
                     List<WallSegment> wallSegments = DivideWallByRoomBoundaries(innerWall, axisLine, segmentDataList);
                     if (wallSegments == null || wallSegments.Count == 0)
                         continue;
@@ -1570,6 +1578,50 @@ private static Curve ExtendCurveToJoinedWalls(
         {
             public Curve Curve { get; set; }
             public Room Room { get; set; }
+        }
+
+        /// <summary>
+        /// Проверяет, граничит ли стена с двумя и более помещениями (с разных сторон).
+        /// Если да – внешнюю стену не создаём.
+        /// </summary>
+        private static bool HasRoomsOnBothSides(Document doc, Wall wall)
+        {
+            try
+            {
+                if (doc == null || wall == null)
+                    return false;
+
+                SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
+                var rooms = new FilteredElementCollector(doc)
+                    .OfClass(typeof(SpatialElement))
+                    .OfType<Room>();
+
+                HashSet<ElementId> touchingRooms = new HashSet<ElementId>();
+
+                foreach (var room in rooms)
+                {
+                    var loops = room.GetBoundarySegments(opt);
+                    if (loops == null) continue;
+                    foreach (var loop in loops)
+                    {
+                        foreach (var seg in loop)
+                        {
+                            if (seg.ElementId == wall.Id)
+                            {
+                                touchingRooms.Add(room.Id);
+                                if (touchingRooms.Count >= 2)
+                                    return true;
+                            }
+                        }
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -1770,6 +1822,13 @@ private static Curve ExtendCurveToJoinedWalls(
                 // Для каждой стены создаем внешнюю стену по её внешней длине
                 foreach (Wall innerWall in roomWalls)
                 {
+                    // Если стена граничит с двумя и более помещениями – пропускаем
+                    if (HasRoomsOnBothSides(doc, innerWall))
+                    {
+                        Log(doc, $"Стена {innerWall.Id} граничит с несколькими помещениями, пропуск");
+                        continue;
+                    }
+
                     // Осевая линия существующей стены (её расчётная длина)
                     LocationCurve wallLocation = innerWall.Location as LocationCurve;
                     if (wallLocation == null || wallLocation.Curve == null || !(wallLocation.Curve is Line axisLine))
