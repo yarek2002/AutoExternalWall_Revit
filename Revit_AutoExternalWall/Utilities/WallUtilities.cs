@@ -1410,15 +1410,40 @@ private static Curve ExtendCurveToJoinedWalls(
                     }
 
                     // Вычисляем смещение наружу
-                    // Смещение = половина толщины внутренней стены + половина толщины внешней стены
+                    // boundaryCurve - это внутренняя грань внутренней стены (граница помещения)
+                    // Wall.Create использует кривую как центральную линию стены
+                    // Чтобы центральная линия внешней стены была снаружи внутренней стены:
+                    // - Смещаем от внутренней грани до центральной линии внутренней стены: innerThickness / 2
+                    // - Смещаем от центральной линии внутренней стены наружу: innerThickness / 2
+                    // - Добавляем половину толщины внешней стены: externalThickness / 2
+                    // Итого: innerThickness + externalThickness / 2
                     double innerThickness = GetWallThickness(innerWall);
                     double externalThickness = GetWallTypeThickness(wallType);
-                    double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
+                    double offsetDistance = innerThickness + (externalThickness / 2.0);
 
                     Log(doc, $"Смещение: {offsetDistance:F3} (толщина внутренней: {innerThickness:F3}, внешней: {externalThickness:F3})");
 
                     // Определяем направление наружу (нормаль к стене, гарантированно от помещения)
-                    XYZ outwardNormal = GetOutwardNormalForRoomBoundary(innerWall, boundaryCurve);
+                    // Получаем нормаль стены и проверяем, что она направлена наружу от помещения
+                    XYZ wallNormal = GetWallFaceNormal(innerWall);
+                    
+                    // Проверяем направление: берем точку на boundaryCurve и точку на центральной линии стены
+                    // Если нормаль направлена от помещения, используем её, иначе инвертируем
+                    XYZ boundaryPoint = boundaryCurve.Evaluate(0.5, false);
+                    LocationCurve wallLoc = innerWall.Location as LocationCurve;
+                    if (wallLoc?.Curve != null)
+                    {
+                        XYZ wallCenterPoint = wallLoc.Curve.Evaluate(0.5, false);
+                        XYZ fromBoundaryToWall = (wallCenterPoint - boundaryPoint).Normalize();
+                        
+                        // Если нормаль направлена в ту же сторону, что и от границы к стене, значит она направлена внутрь помещения
+                        // Нужно инвертировать
+                        if (wallNormal.DotProduct(fromBoundaryToWall) > 0)
+                        {
+                            wallNormal = -wallNormal;
+                        }
+                    }
+                    XYZ outwardNormal = wallNormal;
 
                     // Смещаем кривую границы наружу
                     List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(boundaryCurve, offsetDistance, outwardNormal);
