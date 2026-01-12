@@ -1759,8 +1759,10 @@ private static Curve ExtendCurveToJoinedWalls(
                     return segments;
                 }
 
-                // Находим точки пересечения boundary segments разных комнат
-                SortedSet<double> intersectionPoints = new SortedSet<double>();
+                // Находим точки соприкосновения boundary segments разных комнат
+                // Границы разных комнат соприкасаются там, где концы их segments находятся близко друг к другу
+                SortedSet<double> contactPoints = new SortedSet<double>();
+                const double contactTolerance = 0.05; // допуск для определения соприкосновения (~15 мм)
 
                 var roomIds = segmentsByRoom.Keys.ToList();
                 for (int i = 0; i < roomIds.Count; i++)
@@ -1770,35 +1772,54 @@ private static Curve ExtendCurveToJoinedWalls(
                         ElementId roomId1 = roomIds[i];
                         ElementId roomId2 = roomIds[j];
 
+                        // Собираем все концы segments для каждой комнаты (проецированные на ось)
+                        List<double> endpoints1 = new List<double>();
+                        List<double> endpoints2 = new List<double>();
+
                         foreach (Curve curve1 in segmentsByRoom[roomId1])
                         {
-                            foreach (Curve curve2 in segmentsByRoom[roomId2])
+                            XYZ p0 = curve1.GetEndPoint(0);
+                            XYZ p1 = curve1.GetEndPoint(1);
+                            double t0 = (p0 - axisStart).DotProduct(axisDir);
+                            double t1 = (p1 - axisStart).DotProduct(axisDir);
+                            endpoints1.Add(t0);
+                            endpoints1.Add(t1);
+                        }
+
+                        foreach (Curve curve2 in segmentsByRoom[roomId2])
+                        {
+                            XYZ p0 = curve2.GetEndPoint(0);
+                            XYZ p1 = curve2.GetEndPoint(1);
+                            double t0 = (p0 - axisStart).DotProduct(axisDir);
+                            double t1 = (p1 - axisStart).DotProduct(axisDir);
+                            endpoints2.Add(t0);
+                            endpoints2.Add(t1);
+                        }
+
+                        // Находим точки, где концы segments разных комнат находятся близко друг к другу
+                        foreach (double t1 in endpoints1)
+                        {
+                            foreach (double t2 in endpoints2)
                             {
-                                // Ищем пересечение кривых
-                                SetComparisonResult result = curve1.Intersect(curve2, out IntersectionResultArray intersections);
-                                
-                                if (result == SetComparisonResult.Overlap && intersections != null)
+                                if (Math.Abs(t1 - t2) < contactTolerance)
                                 {
-                                    for (int k = 0; k < intersections.Size; k++)
+                                    // Найдена точка соприкосновения - используем среднее значение
+                                    double contactPoint = (t1 + t2) / 2.0;
+                                    
+                                    // Добавляем только внутренние точки (не концы стены)
+                                    const double edgeTolerance = 0.01;
+                                    if (contactPoint > edgeTolerance && contactPoint < axisLength - edgeTolerance)
                                     {
-                                        IntersectionResult intersection = intersections.get_Item(k);
-                                        XYZ intersectionPoint = intersection.XYZPoint;
-                                        
-                                        // Проецируем точку пересечения на ось стены
-                                        double t = (intersectionPoint - axisStart).DotProduct(axisDir);
-                                        
-                                        // Добавляем только внутренние точки (не концы стены)
-                                        const double tolerance = 0.01;
-                                        if (t > tolerance && t < axisLength - tolerance)
-                                        {
-                                            intersectionPoints.Add(t);
-                                        }
+                                        contactPoints.Add(contactPoint);
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                // Используем найденные точки соприкосновения как точки разделения
+                SortedSet<double> intersectionPoints = contactPoints;
 
                 // Если нет точек пересечения - возвращаем всю стену с первой комнатой
                 if (intersectionPoints.Count == 0)
