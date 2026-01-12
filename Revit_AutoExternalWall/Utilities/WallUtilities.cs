@@ -46,7 +46,7 @@ namespace Revit_AutoExternalWall.Utilities
             public Curve Curve { get; set; }
         }
 
-                      /// <summary>
+        /// <summary>
         /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
         /// </summary>
         public static WallType GetExternalWallType(Document doc)
@@ -1484,30 +1484,15 @@ private static Curve ExtendCurveToJoinedWalls(
                 // Для каждой стены создаем внешнюю стену по её внешней длине
                 foreach (Wall innerWall in roomWalls)
                 {
-                    // Пытаемся взять кривую внешней грани стены (точная внешняя длина)
-                    Curve exteriorFaceCurve = GetExteriorFacePlanCurve(innerWall);
+                    // Осевая линия существующей стены (её расчётная длина)
+                    LocationCurve wallLocation = innerWall.Location as LocationCurve;
+                    if (wallLocation == null || wallLocation.Curve == null || !(wallLocation.Curve is Line axisLine))
+                    {
+                        Log(doc, $"Стена {innerWall.Id} не имеет подходящей осевой линии");
+                        continue;
+                    }
 
-                    // Фоллбек на осевую линию, если внешняя грань недоступна
-                    if (exteriorFaceCurve == null || exteriorFaceCurve.Length < 0.01)
-                    {
-                        LocationCurve wallLocation = innerWall.Location as LocationCurve;
-                        if (wallLocation == null || wallLocation.Curve == null)
-                        {
-                            Log(doc, $"Стена {innerWall.Id} не имеет доступной геометрии");
-                            continue;
-                        }
-                        exteriorFaceCurve = wallLocation.Curve;
-                        if (exteriorFaceCurve == null || exteriorFaceCurve.Length < 0.01)
-                        {
-                            Log(doc, $"Стена {innerWall.Id} имеет слишком короткую геометрию");
-                            continue;
-                        }
-                        Log(doc, $"Обрабатываем стену {innerWall.Id}, длина оси (fallback): {exteriorFaceCurve.Length:F3}");
-                    }
-                    else
-                    {
-                        Log(doc, $"Обрабатываем стену {innerWall.Id}, длина внешней грани: {exteriorFaceCurve.Length:F3}");
-                    }
+                    Log(doc, $"Обрабатываем стену {innerWall.Id}, длина оси: {axisLine.Length:F3}");
 
                     // Получаем параметры стены
                     Level level = GetWallLevel(innerWall);
@@ -1518,46 +1503,28 @@ private static Curve ExtendCurveToJoinedWalls(
                         continue;
                     }
 
-                    // Вычисляем смещение от внешней грани до центральной линии создаваемой стены:
-                    // берём половину толщины новой стены.
+                    // Вычисляем смещение от оси внутренней стены до оси внешней:
+                    // берём половину толщины внутренней + половину толщины новой стены.
+                    double innerThickness = GetWallThickness(innerWall);
                     double externalThickness = GetWallTypeThickness(wallType);
-                    double offsetDistance = externalThickness / 2.0;
+                    double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
 
-                    Log(doc, $"Смещение: {offsetDistance:F3} (толщина внешней: {externalThickness:F3})");
+                    Log(doc, $"Смещение: {offsetDistance:F3} (толщина внутренней: {innerThickness:F3}, внешней: {externalThickness:F3})");
 
                     // Определяем направление наружу от помещения
                     // Используем граничную кривую для определения направления
                     Curve boundaryCurve = null;
                     wallBoundaryCurves.TryGetValue(innerWall.Id, out boundaryCurve);
 
-                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve ?? exteriorFaceCurve, room);
+                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve ?? axisLine, room);
 
-                    // Смещаем внешнюю грань стены наружу
-                    List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(exteriorFaceCurve, offsetDistance, outwardNormal);
-                    
-                    if (offsetCurves == null || offsetCurves.Count == 0)
-                    {
-                        Log(doc, $"Не удалось сместить кривую для стены {innerWall.Id}");
-                        continue;
-                    }
+                    // Строим ось внешней стены: ось внутренней + смещение по нормали
+                    XYZ axisStart = axisLine.GetEndPoint(0);
+                    XYZ axisEnd   = axisLine.GetEndPoint(1);
+                    XYZ externalStart = axisStart + outwardNormal * offsetDistance;
+                    XYZ externalEnd   = axisEnd   + outwardNormal * offsetDistance;
 
-                    // Берем первую смещенную кривую и разворачиваем её (чтобы внутренняя грань была обращена к исходной стене)
-                    Curve externalCurve = offsetCurves[0].CreateReversed();
-
-                    // Строим кривую той же длины, что и ось исходной стены, смещённую на offsetDistance наружу
-                    if (externalCurve is Line && innerWall.Location is LocationCurve locAxis && locAxis.Curve is Line axisLine)
-                    {
-                        XYZ axisDir = (axisLine.GetEndPoint(1) - axisLine.GetEndPoint(0)).Normalize();
-                        XYZ newStart = axisLine.GetEndPoint(0) + outwardNormal * offsetDistance;
-                        XYZ newEnd   = axisLine.GetEndPoint(1) + outwardNormal * offsetDistance;
-                        externalCurve = Line.CreateBound(newStart, newEnd).CreateReversed();
-                    }
-                    else
-                    {
-                        // Дотягиваем до торцов если линия не определена явно
-                        externalCurve = ExtendToWallEnds(innerWall, externalCurve);
-                        externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
-                    }
+                    Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
 
                     if (externalCurve == null || externalCurve.Length < 0.01)
                     {
