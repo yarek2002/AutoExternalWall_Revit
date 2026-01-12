@@ -1544,6 +1544,9 @@ private static Curve ExtendCurveToJoinedWalls(
                     // Берем первую смещенную кривую и разворачиваем её (чтобы внутренняя грань была обращена к исходной стене)
                     Curve externalCurve = offsetCurves[0].CreateReversed();
 
+                    // Дотягиваем кривую до реальных торцов стены с учётом стыков
+                    externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+
                     if (externalCurve == null || externalCurve.Length < 0.01)
                     {
                         Log(doc, $"Смещенная кривая слишком короткая для стены {innerWall.Id}");
