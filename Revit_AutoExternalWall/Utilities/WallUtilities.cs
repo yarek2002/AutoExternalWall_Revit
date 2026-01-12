@@ -1558,9 +1558,6 @@ private static Curve ExtendCurveToJoinedWalls(
                     if (wallSegments == null || wallSegments.Count == 0)
                         continue;
 
-                    // Берём первое помещение для определения направления наружу
-                    Room refRoom = wallSegments[0].Room;
-
                     // Получаем параметры стены
                     Level level = GetWallLevel(innerWall);
                     double height = GetWallHeight(innerWall);
@@ -1570,40 +1567,44 @@ private static Curve ExtendCurveToJoinedWalls(
                     double externalThickness = GetWallTypeThickness(wallType);
                     double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
 
-                    // Определяем направление наружу по осевой линии и опорному помещению
-                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, axisLine, refRoom);
-
-                    // Строим ось внешней стены по всей длине исходной стены
-                    XYZ axisStart = axisLine.GetEndPoint(0);
-                    XYZ axisEnd = axisLine.GetEndPoint(1);
-                    XYZ externalStart = axisStart + outwardNormal * offsetDistance;
-                    XYZ externalEnd = axisEnd + outwardNormal * offsetDistance;
-
-                    Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
-                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
-                    externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
-
-                    if (externalCurve == null || externalCurve.Length < 0.01)
-                        continue;
-
-                    // Создаем внешнюю стену
-                    Wall externalWall = Wall.Create(
-                        doc,
-                        externalCurve,
-                        wallType.Id,
-                        level.Id,
-                        height,
-                        0.0,
-                        false,
-                        false
-                    );
-
-                    if (externalWall != null)
+                    // Создаем внешнюю стену для каждого сегмента
+                    foreach (WallSegment segment in wallSegments)
                     {
-                        DisableWallJoins(externalWall);
-                        CopyWallProperties(innerWall, externalWall);
-                        created++;
-                        Log(doc, $"Создана внешняя стена {externalWall.Id} для стены {innerWall.Id}");
+                        // Определяем направление наружу для этого сегмента
+                        XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
+
+                        // Строим ось внешней стены для сегмента
+                        XYZ segStart = segment.Curve.GetEndPoint(0);
+                        XYZ segEnd = segment.Curve.GetEndPoint(1);
+                        XYZ externalStart = segStart + outwardNormal * offsetDistance;
+                        XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
+
+                        Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                        externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                        externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+
+                        if (externalCurve == null || externalCurve.Length < 0.01)
+                            continue;
+
+                        // Создаем внешнюю стену для сегмента
+                        Wall externalWall = Wall.Create(
+                            doc,
+                            externalCurve,
+                            wallType.Id,
+                            level.Id,
+                            height,
+                            0.0,
+                            false,
+                            false
+                        );
+
+                        if (externalWall != null)
+                        {
+                            DisableWallJoins(externalWall);
+                            CopyWallProperties(innerWall, externalWall);
+                            created++;
+                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id}");
+                        }
                     }
                 }
 
@@ -1701,7 +1702,8 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
-        /// Разделяет стену на сегменты по границам помещений
+        /// Разделяет стену на сегменты по точкам пересечения границ разных комнат.
+        /// Деление происходит именно там, где границы разных комнат встречаются друг с другом.
         /// </summary>
         private static List<WallSegment> DivideWallByRoomBoundaries(
             Wall wall, 
@@ -1713,7 +1715,6 @@ private static Curve ExtendCurveToJoinedWalls(
             if (wall == null || axisLine == null || segmentDataList == null || segmentDataList.Count == 0)
             {
                 // Если нет данных для разделения, возвращаем всю стену
-                // Определяем помещение по первому сегменту
                 if (segmentDataList != null && segmentDataList.Count > 0)
                 {
                     segments.Add(new WallSegment
@@ -1732,34 +1733,90 @@ private static Curve ExtendCurveToJoinedWalls(
                 XYZ axisDir = (axisEnd - axisStart).Normalize();
                 double axisLength = axisLine.Length;
 
-                // Собираем все точки разреза (концы boundary segments, проецированные на ось)
-                SortedSet<double> cutPoints = new SortedSet<double>();
-
+                // Группируем boundary segments по комнатам
+                Dictionary<ElementId, List<Curve>> segmentsByRoom = new Dictionary<ElementId, List<Curve>>();
                 foreach (var segData in segmentDataList)
                 {
-                    if (segData.Curve == null) continue;
+                    if (segData.Curve == null || segData.Room == null)
+                        continue;
 
-                    XYZ p0 = segData.Curve.GetEndPoint(0);
-                    XYZ p1 = segData.Curve.GetEndPoint(1);
+                    ElementId roomId = segData.Room.Id;
+                    if (!segmentsByRoom.ContainsKey(roomId))
+                        segmentsByRoom[roomId] = new List<Curve>();
+                    
+                    segmentsByRoom[roomId].Add(segData.Curve);
+                }
 
-                    // Проецируем точки на ось стены
-                    double t0 = (p0 - axisStart).DotProduct(axisDir);
-                    double t1 = (p1 - axisStart).DotProduct(axisDir);
+                // Если только одна комната - возвращаем всю стену
+                if (segmentsByRoom.Count <= 1)
+                {
+                    Room singleRoom = segmentDataList[0].Room;
+                    segments.Add(new WallSegment
+                    {
+                        Curve = axisLine,
+                        Room = singleRoom
+                    });
+                    return segments;
+                }
 
-                    // Добавляем только внутренние точки разреза (не концы стены)
-                    const double tolerance = 0.01;
-                    if (t0 > tolerance && t0 < axisLength - tolerance)
-                        cutPoints.Add(t0);
-                    if (t1 > tolerance && t1 < axisLength - tolerance)
-                        cutPoints.Add(t1);
+                // Находим точки пересечения boundary segments разных комнат
+                SortedSet<double> intersectionPoints = new SortedSet<double>();
+
+                var roomIds = segmentsByRoom.Keys.ToList();
+                for (int i = 0; i < roomIds.Count; i++)
+                {
+                    for (int j = i + 1; j < roomIds.Count; j++)
+                    {
+                        ElementId roomId1 = roomIds[i];
+                        ElementId roomId2 = roomIds[j];
+
+                        foreach (Curve curve1 in segmentsByRoom[roomId1])
+                        {
+                            foreach (Curve curve2 in segmentsByRoom[roomId2])
+                            {
+                                // Ищем пересечение кривых
+                                SetComparisonResult result = curve1.Intersect(curve2, out IntersectionResultArray intersections);
+                                
+                                if (result == SetComparisonResult.Overlap && intersections != null)
+                                {
+                                    for (int k = 0; k < intersections.Size; k++)
+                                    {
+                                        IntersectionResult intersection = intersections.get_Item(k);
+                                        XYZ intersectionPoint = intersection.XYZPoint;
+                                        
+                                        // Проецируем точку пересечения на ось стены
+                                        double t = (intersectionPoint - axisStart).DotProduct(axisDir);
+                                        
+                                        // Добавляем только внутренние точки (не концы стены)
+                                        const double tolerance = 0.01;
+                                        if (t > tolerance && t < axisLength - tolerance)
+                                        {
+                                            intersectionPoints.Add(t);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Если нет точек пересечения - возвращаем всю стену с первой комнатой
+                if (intersectionPoints.Count == 0)
+                {
+                    segments.Add(new WallSegment
+                    {
+                        Curve = axisLine,
+                        Room = segmentDataList[0].Room
+                    });
+                    return segments;
                 }
 
                 // Строим список точек разреза с концами стены
                 List<double> splitPoints = new List<double> { 0.0 };
-                splitPoints.AddRange(cutPoints);
+                splitPoints.AddRange(intersectionPoints);
                 splitPoints.Add(axisLength);
 
-                // Группируем boundary segments по помещениям для каждого интервала
+                // Создаем сегменты между точками пересечения
                 for (int i = 0; i < splitPoints.Count - 1; i++)
                 {
                     double tStart = splitPoints[i];
@@ -1768,7 +1825,7 @@ private static Curve ExtendCurveToJoinedWalls(
                     if (tEnd - tStart < 0.01)
                         continue;
 
-                    // Находим помещение для этого интервала
+                    // Находим комнату для этого интервала
                     Room roomForSegment = FindRoomForInterval(
                         axisLine, tStart, tEnd, segmentDataList);
 
