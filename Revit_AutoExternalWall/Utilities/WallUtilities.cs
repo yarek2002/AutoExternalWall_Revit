@@ -1421,6 +1421,292 @@ private static Curve ExtendCurveToJoinedWalls(
 }
 
         /// <summary>
+        /// Создает внешние стены для нескольких помещений.
+        /// Если стена используется несколькими помещениями, она разделяется на сегменты по границам помещений.
+        /// </summary>
+        public static int CreateExternalWallsFromRooms(Document doc, List<Room> rooms, WallType wallType)
+        {
+            if (doc == null || rooms == null || rooms.Count == 0 || wallType == null)
+                return 0;
+
+            int created = 0;
+
+            try
+            {
+                Log(doc, $"Начинаем создание внешних стен для {rooms.Count} помещений");
+
+                // Собираем все стены и их boundary segments от всех помещений
+                Dictionary<ElementId, List<BoundarySegmentData>> segmentsByWall = 
+                    new Dictionary<ElementId, List<BoundarySegmentData>>();
+
+                SpatialElementBoundaryOptions options = new SpatialElementBoundaryOptions();
+
+                foreach (Room room in rooms)
+                {
+                    IList<IList<BoundarySegment>> boundaryLoops = room.GetBoundarySegments(options);
+                    if (boundaryLoops == null) continue;
+
+                    foreach (IList<BoundarySegment> loop in boundaryLoops)
+                    {
+                        foreach (BoundarySegment segment in loop)
+                        {
+                            Element boundaryElement = doc.GetElement(segment.ElementId);
+                            if (boundaryElement is Wall wall)
+                            {
+                                if (!segmentsByWall.ContainsKey(wall.Id))
+                                {
+                                    segmentsByWall[wall.Id] = new List<BoundarySegmentData>();
+                                }
+
+                                segmentsByWall[wall.Id].Add(new BoundarySegmentData
+                                {
+                                    Segment = segment,
+                                    Room = room,
+                                    Curve = segment.GetCurve()
+                                });
+                            }
+                        }
+                    }
+                }
+
+                Log(doc, $"Найдено уникальных стен: {segmentsByWall.Count}");
+
+                // Обрабатываем каждую стену
+                foreach (var kvp in segmentsByWall)
+                {
+                    Wall innerWall = doc.GetElement(kvp.Key) as Wall;
+                    if (innerWall == null) continue;
+
+                    List<BoundarySegmentData> segmentDataList = kvp.Value;
+
+                    // Получаем осевую линию стены
+                    LocationCurve wallLocation = innerWall.Location as LocationCurve;
+                    if (wallLocation == null || wallLocation.Curve == null || !(wallLocation.Curve is Line axisLine))
+                    {
+                        Log(doc, $"Стена {innerWall.Id} не имеет подходящей осевой линии");
+                        continue;
+                    }
+
+                    // Разделяем стену на сегменты по границам помещений
+                    List<WallSegment> wallSegments = DivideWallByRoomBoundaries(innerWall, axisLine, segmentDataList);
+
+                    Log(doc, $"Стена {innerWall.Id} разделена на {wallSegments.Count} сегментов");
+
+                    // Получаем параметры стены
+                    Level level = GetWallLevel(innerWall);
+                    double height = GetWallHeight(innerWall);
+                    if (level == null) continue;
+
+                    double innerThickness = GetWallThickness(innerWall);
+                    double externalThickness = GetWallTypeThickness(wallType);
+                    double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
+
+                    // Создаем внешнюю стену для каждого сегмента
+                    foreach (WallSegment segment in wallSegments)
+                    {
+                        // Определяем направление наружу от помещения для этого сегмента
+                        XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
+
+                        // Строим ось внешней стены для сегмента
+                        XYZ segStart = segment.Curve.GetEndPoint(0);
+                        XYZ segEnd = segment.Curve.GetEndPoint(1);
+                        XYZ externalStart = segStart + outwardNormal * offsetDistance;
+                        XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
+
+                        Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                        externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                        externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+
+                        if (externalCurve == null || externalCurve.Length < 0.01)
+                            continue;
+
+                        // Создаем внешнюю стену
+                        Wall externalWall = Wall.Create(
+                            doc,
+                            externalCurve,
+                            wallType.Id,
+                            level.Id,
+                            height,
+                            0.0,
+                            false,
+                            false
+                        );
+
+                        if (externalWall != null)
+                        {
+                            DisableWallJoins(externalWall);
+                            CopyWallProperties(innerWall, externalWall);
+                            created++;
+                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id}");
+                        }
+                    }
+                }
+
+                Log(doc, $"Всего создано внешних стен: {created}");
+            }
+            catch (Exception ex)
+            {
+                Log(doc, $"Ошибка при создании внешних стен: {ex.Message}");
+                throw new Exception($"Error creating external walls from rooms: {ex.Message}", ex);
+            }
+
+            return created;
+        }
+
+        /// <summary>
+        /// Данные о boundary segment с привязкой к помещению
+        /// </summary>
+        private class BoundarySegmentData
+        {
+            public BoundarySegment Segment { get; set; }
+            public Room Room { get; set; }
+            public Curve Curve { get; set; }
+        }
+
+        /// <summary>
+        /// Сегмент стены с привязкой к помещению
+        /// </summary>
+        private class WallSegment
+        {
+            public Curve Curve { get; set; }
+            public Room Room { get; set; }
+        }
+
+        /// <summary>
+        /// Разделяет стену на сегменты по границам помещений
+        /// </summary>
+        private static List<WallSegment> DivideWallByRoomBoundaries(
+            Wall wall, 
+            Line axisLine, 
+            List<BoundarySegmentData> segmentDataList)
+        {
+            var segments = new List<WallSegment>();
+
+            if (wall == null || axisLine == null || segmentDataList == null || segmentDataList.Count == 0)
+            {
+                // Если нет данных для разделения, возвращаем всю стену
+                // Определяем помещение по первому сегменту
+                if (segmentDataList != null && segmentDataList.Count > 0)
+                {
+                    segments.Add(new WallSegment
+                    {
+                        Curve = axisLine,
+                        Room = segmentDataList[0].Room
+                    });
+                }
+                return segments;
+            }
+
+            try
+            {
+                XYZ axisStart = axisLine.GetEndPoint(0);
+                XYZ axisEnd = axisLine.GetEndPoint(1);
+                XYZ axisDir = (axisEnd - axisStart).Normalize();
+                double axisLength = axisLine.Length;
+
+                // Собираем все точки разреза (концы boundary segments, проецированные на ось)
+                SortedSet<double> cutPoints = new SortedSet<double>();
+
+                foreach (var segData in segmentDataList)
+                {
+                    if (segData.Curve == null) continue;
+
+                    XYZ p0 = segData.Curve.GetEndPoint(0);
+                    XYZ p1 = segData.Curve.GetEndPoint(1);
+
+                    // Проецируем точки на ось стены
+                    double t0 = (p0 - axisStart).DotProduct(axisDir);
+                    double t1 = (p1 - axisStart).DotProduct(axisDir);
+
+                    // Добавляем только внутренние точки разреза (не концы стены)
+                    const double tolerance = 0.01;
+                    if (t0 > tolerance && t0 < axisLength - tolerance)
+                        cutPoints.Add(t0);
+                    if (t1 > tolerance && t1 < axisLength - tolerance)
+                        cutPoints.Add(t1);
+                }
+
+                // Строим список точек разреза с концами стены
+                List<double> splitPoints = new List<double> { 0.0 };
+                splitPoints.AddRange(cutPoints);
+                splitPoints.Add(axisLength);
+
+                // Группируем boundary segments по помещениям для каждого интервала
+                for (int i = 0; i < splitPoints.Count - 1; i++)
+                {
+                    double tStart = splitPoints[i];
+                    double tEnd = splitPoints[i + 1];
+
+                    if (tEnd - tStart < 0.01)
+                        continue;
+
+                    // Находим помещение для этого интервала
+                    Room roomForSegment = FindRoomForInterval(
+                        axisLine, tStart, tEnd, segmentDataList);
+
+                    if (roomForSegment != null)
+                    {
+                        XYZ segStart = axisStart + axisDir * tStart;
+                        XYZ segEnd = axisStart + axisDir * tEnd;
+                        Curve segmentCurve = Line.CreateBound(segStart, segEnd);
+
+                        segments.Add(new WallSegment
+                        {
+                            Curve = segmentCurve,
+                            Room = roomForSegment
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(wall.Document, $"Ошибка при разделении стены: {ex.Message}");
+                // В случае ошибки возвращаем всю стену
+                if (segmentDataList.Count > 0)
+                {
+                    segments.Add(new WallSegment
+                    {
+                        Curve = axisLine,
+                        Room = segmentDataList[0].Room
+                    });
+                }
+            }
+
+            return segments;
+        }
+
+        /// <summary>
+        /// Находит помещение для заданного интервала на оси стены
+        /// </summary>
+        private static Room FindRoomForInterval(
+            Line axisLine, 
+            double tStart, 
+            double tEnd, 
+            List<BoundarySegmentData> segmentDataList)
+        {
+            XYZ axisStart = axisLine.GetEndPoint(0);
+            XYZ axisDir = (axisLine.GetEndPoint(1) - axisStart).Normalize();
+            double midT = (tStart + tEnd) / 2.0;
+            XYZ midPoint = axisStart + axisDir * midT;
+
+            // Ищем boundary segment, который содержит эту точку
+            foreach (var segData in segmentDataList)
+            {
+                if (segData.Curve == null) continue;
+
+                // Проверяем, находится ли точка вблизи этого boundary segment
+                double dist = segData.Curve.Distance(midPoint);
+                if (dist < 0.1) // допуск ~30 мм
+                {
+                    return segData.Room;
+                }
+            }
+
+            // Если не нашли, возвращаем первое помещение
+            return segmentDataList.Count > 0 ? segmentDataList[0].Room : null;
+        }
+
+        /// <summary>
         /// Новая простая логика создания внешних стен для одного помещения.
         /// Создает внешние стены, повторяющие границы стен помещения.
         /// </summary>

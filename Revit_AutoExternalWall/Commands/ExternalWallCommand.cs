@@ -87,22 +87,25 @@ namespace Revit_AutoExternalWall
                     // Place external walls
                     int wallsCreated = 0;
 
-                    // Создаем внешние стены для выбранного помещения
+                    // Создаем внешние стены для выбранных помещений
                     if (selectedRooms.Count > 0)
                     {
-                        if (selectedRooms.Count > 1)
-                        {
-                            TaskDialog.Show("Warning", "Пожалуйста, выберите только одно помещение для тестирования.");
-                            return Result.Cancelled;
-                        }
-
                         try
                         {
-                            wallsCreated += WallUtilities.CreateExternalWallsFromSingleRoom(doc, selectedRooms[0], externalWallType);
+                            if (selectedRooms.Count == 1)
+                            {
+                                // Для одного помещения используем простую логику
+                                wallsCreated += WallUtilities.CreateExternalWallsFromSingleRoom(doc, selectedRooms[0], externalWallType);
+                            }
+                            else
+                            {
+                                // Для нескольких помещений используем логику с разделением стен
+                                wallsCreated += WallUtilities.CreateExternalWallsFromRooms(doc, selectedRooms, externalWallType);
+                            }
                         }
                         catch (Exception ex)
                         {
-                            message += $"Error processing room: {ex.Message}\n";
+                            message += $"Error processing rooms: {ex.Message}\n";
                         }
                     }
                     else
