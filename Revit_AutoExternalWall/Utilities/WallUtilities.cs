@@ -1525,6 +1525,9 @@ private static Curve ExtendCurveToJoinedWalls(
                     XYZ externalEnd   = axisEnd   + outwardNormal * offsetDistance;
 
                     Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                    // Дотягиваем до торцов исходной стены (учёт её толщины и примыканий)
+                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                    externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
 
                     if (externalCurve == null || externalCurve.Length < 0.01)
                     {
