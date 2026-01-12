@@ -1544,10 +1544,20 @@ private static Curve ExtendCurveToJoinedWalls(
                     // Берем первую смещенную кривую и разворачиваем её (чтобы внутренняя грань была обращена к исходной стене)
                     Curve externalCurve = offsetCurves[0].CreateReversed();
 
-                    // Дотягиваем кривую до фактических торцов исходной стены,
-                    // затем учитываем подрезку стыков
-                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
-                    externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+                    // Строим кривую той же длины, что и ось исходной стены, смещённую на offsetDistance наружу
+                    if (externalCurve is Line && innerWall.Location is LocationCurve locAxis && locAxis.Curve is Line axisLine)
+                    {
+                        XYZ axisDir = (axisLine.GetEndPoint(1) - axisLine.GetEndPoint(0)).Normalize();
+                        XYZ newStart = axisLine.GetEndPoint(0) + outwardNormal * offsetDistance;
+                        XYZ newEnd   = axisLine.GetEndPoint(1) + outwardNormal * offsetDistance;
+                        externalCurve = Line.CreateBound(newStart, newEnd).CreateReversed();
+                    }
+                    else
+                    {
+                        // Дотягиваем до торцов если линия не определена явно
+                        externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                        externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+                    }
 
                     if (externalCurve == null || externalCurve.Length < 0.01)
                     {
