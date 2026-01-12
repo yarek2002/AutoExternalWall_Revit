@@ -46,7 +46,7 @@ namespace Revit_AutoExternalWall.Utilities
             public Curve Curve { get; set; }
         }
 
-        /// <summary>
+                      /// <summary>
         /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
         /// </summary>
         public static WallType GetExternalWallType(Document doc)
@@ -1507,15 +1507,18 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Определяем направление наружу от помещения для этого сегмента
                         XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
 
-                        // Строим ось внешней стены для сегмента
-                        XYZ segStart = segment.Curve.GetEndPoint(0);
-                        XYZ segEnd = segment.Curve.GetEndPoint(1);
+                        // Строим ось внешней стены для сегмента по внешней грани:
+                        // ось сегмента + (толщина внутренней/2 + толщина внешней/2) наружу, без растяжения.
+                        if (!(segment.Curve is Line segLine))
+                            continue;
+
+                        XYZ segStart = segLine.GetEndPoint(0);
+                        XYZ segEnd = segLine.GetEndPoint(1);
+
                         XYZ externalStart = segStart + outwardNormal * offsetDistance;
                         XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
 
                         Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
-                        externalCurve = ExtendToWallEnds(innerWall, externalCurve);
-                        externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
 
                         if (externalCurve == null || externalCurve.Length < 0.01)
                             continue;
