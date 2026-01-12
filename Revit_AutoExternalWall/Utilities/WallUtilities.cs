@@ -1421,6 +1421,66 @@ private static Curve ExtendCurveToJoinedWalls(
 }
 
         /// <summary>
+        /// Проверяет, является ли стена внешней по выбранным помещениям:
+        /// true — хотя бы с одной стороны нет помещения (ставим внешнюю стену);
+        /// false — помещения есть с обеих сторон (перегородка, не создаем).
+        /// </summary>
+        private static bool IsExternalWall(Document doc, Wall wall, List<BoundarySegmentData> segmentDataList)
+        {
+            if (wall == null)
+                return true; // нет данных — считаем внешней
+
+            try
+            {
+                if (!(wall.Location is LocationCurve lc) || !(lc.Curve is Line wallLine))
+                    return true;
+
+                // Если нет данных о выбранных помещениях — считаем стену внешней
+                if (segmentDataList == null || segmentDataList.Count == 0)
+                    return true;
+
+                XYZ wallNormal = GetWallFaceNormal(wall);
+
+                bool hasRoomOnPositiveSide = false;
+                bool hasRoomOnNegativeSide = false;
+
+                foreach (var segData in segmentDataList)
+                {
+                    if (segData.Curve == null || segData.Room == null)
+                        continue;
+
+                    // Берем середину boundary segment
+                    XYZ midPoint = segData.Curve.Evaluate(0.5, true);
+
+                    // Проецируем на ось стены
+                    XYZ closestPointOnWall = wallLine.Project(midPoint)?.XYZPoint ?? wallLine.Evaluate(0.5, true);
+
+                    // Вектор от стены к помещению
+                    XYZ fromWallToRoom = (midPoint - closestPointOnWall).Normalize();
+
+                    // Определяем сторону по скалярному произведению с нормалью
+                    double dotProduct = wallNormal.DotProduct(fromWallToRoom);
+
+                    if (dotProduct > 0.1) // помещение с положительной стороны
+                        hasRoomOnPositiveSide = true;
+                    else if (dotProduct < -0.1) // помещение с отрицательной стороны
+                        hasRoomOnNegativeSide = true;
+
+                    if (hasRoomOnPositiveSide && hasRoomOnNegativeSide)
+                        break;
+                }
+
+                // Если помещения с обеих сторон — перегородка (false), иначе внешняя (true)
+                return !(hasRoomOnPositiveSide && hasRoomOnNegativeSide);
+            }
+            catch
+            {
+                // В случае ошибки считаем стену внешней (создаем)
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Создает внешние стены для нескольких помещений.
         /// Если стена используется несколькими помещениями, она разделяется на сегменты по границам помещений.
         /// </summary>
@@ -1487,13 +1547,10 @@ private static Curve ExtendCurveToJoinedWalls(
                         continue;
                     }
 
-                    // Разделяем стену на сегменты по границам помещений (только для определения помещений),
-                    // но строим ОДНУ внешнюю стену по всей длине исходной стены.
-                    // Если стена граничит с помещениями с обеих сторон — пропускаем
-                    var distinctRooms = segmentDataList.Select(s => s.Room?.Id).Where(id => id != null).Distinct().ToList();
-                    if (distinctRooms.Count >= 2)
+                    // Проверяем, является ли стена внешней (хотя бы с одной стороны нет помещения)
+                    if (!IsExternalWall(doc, innerWall, segmentDataList))
                     {
-                        Log(doc, $"Стена {innerWall.Id} граничит с несколькими помещениями, пропуск");
+                        Log(doc, $"Стена {innerWall.Id} имеет помещения с обеих сторон, пропуск (перегородка)");
                         continue;
                     }
 
@@ -1841,10 +1898,30 @@ private static Curve ExtendCurveToJoinedWalls(
                 // Для каждой стены создаем внешнюю стену по её внешней длине
                 foreach (Wall innerWall in roomWalls)
                 {
-                    // Если стена граничит с двумя и более помещениями – пропускаем
-                    if (HasRoomsOnBothSides(doc, innerWall))
+                    // Проверяем, является ли стена внешней (хотя бы с одной стороны нет помещения)
+                    // Создаем список boundary segments для этой стены
+                    List<BoundarySegmentData> segmentDataList = new List<BoundarySegmentData>();
+                    
+                    // Находим boundary segment для этого помещения
+                    foreach (IList<BoundarySegment> loop in boundaryLoops)
                     {
-                        Log(doc, $"Стена {innerWall.Id} граничит с несколькими помещениями, пропуск");
+                        foreach (BoundarySegment segment in loop)
+                        {
+                            if (segment.ElementId == innerWall.Id)
+                            {
+                                segmentDataList.Add(new BoundarySegmentData
+                                {
+                                    Segment = segment,
+                                    Room = room,
+                                    Curve = segment.GetCurve()
+                                });
+                            }
+                        }
+                    }
+
+                    if (!IsExternalWall(doc, innerWall, segmentDataList))
+                    {
+                        Log(doc, $"Стена {innerWall.Id} имеет помещения с обеих сторон, пропуск (перегородка)");
                         continue;
                     }
 
