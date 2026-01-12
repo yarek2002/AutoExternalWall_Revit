@@ -1487,10 +1487,14 @@ private static Curve ExtendCurveToJoinedWalls(
                         continue;
                     }
 
-                    // Разделяем стену на сегменты по границам помещений
+                    // Разделяем стену на сегменты по границам помещений (только для определения помещений),
+                    // но строим ОДНУ внешнюю стену по всей длине исходной стены.
                     List<WallSegment> wallSegments = DivideWallByRoomBoundaries(innerWall, axisLine, segmentDataList);
+                    if (wallSegments == null || wallSegments.Count == 0)
+                        continue;
 
-                    Log(doc, $"Стена {innerWall.Id} разделена на {wallSegments.Count} сегментов");
+                    // Берём первое помещение для определения направления наружу
+                    Room refRoom = wallSegments[0].Room;
 
                     // Получаем параметры стены
                     Level level = GetWallLevel(innerWall);
@@ -1501,47 +1505,40 @@ private static Curve ExtendCurveToJoinedWalls(
                     double externalThickness = GetWallTypeThickness(wallType);
                     double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
 
-                    // Создаем внешнюю стену для каждого сегмента
-                    foreach (WallSegment segment in wallSegments)
+                    // Определяем направление наружу по осевой линии и опорному помещению
+                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, axisLine, refRoom);
+
+                    // Строим ось внешней стены по всей длине исходной стены
+                    XYZ axisStart = axisLine.GetEndPoint(0);
+                    XYZ axisEnd = axisLine.GetEndPoint(1);
+                    XYZ externalStart = axisStart + outwardNormal * offsetDistance;
+                    XYZ externalEnd = axisEnd + outwardNormal * offsetDistance;
+
+                    Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                    externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+
+                    if (externalCurve == null || externalCurve.Length < 0.01)
+                        continue;
+
+                    // Создаем внешнюю стену
+                    Wall externalWall = Wall.Create(
+                        doc,
+                        externalCurve,
+                        wallType.Id,
+                        level.Id,
+                        height,
+                        0.0,
+                        false,
+                        false
+                    );
+
+                    if (externalWall != null)
                     {
-                        // Определяем направление наружу от помещения для этого сегмента
-                        XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
-
-                        // Строим ось внешней стены для сегмента по внешней грани:
-                        // ось сегмента + (толщина внутренней/2 + толщина внешней/2) наружу, без растяжения.
-                        if (!(segment.Curve is Line segLine))
-                            continue;
-
-                        XYZ segStart = segLine.GetEndPoint(0);
-                        XYZ segEnd = segLine.GetEndPoint(1);
-
-                        XYZ externalStart = segStart + outwardNormal * offsetDistance;
-                        XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
-
-                        Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
-
-                        if (externalCurve == null || externalCurve.Length < 0.01)
-                            continue;
-
-                        // Создаем внешнюю стену
-                        Wall externalWall = Wall.Create(
-                            doc,
-                            externalCurve,
-                            wallType.Id,
-                            level.Id,
-                            height,
-                            0.0,
-                            false,
-                            false
-                        );
-
-                        if (externalWall != null)
-                        {
-                            DisableWallJoins(externalWall);
-                            CopyWallProperties(innerWall, externalWall);
-                            created++;
-                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id}");
-                        }
+                        DisableWallJoins(externalWall);
+                        CopyWallProperties(innerWall, externalWall);
+                        created++;
+                        Log(doc, $"Создана внешняя стена {externalWall.Id} для стены {innerWall.Id}");
                     }
                 }
 
