@@ -46,7 +46,7 @@ namespace Revit_AutoExternalWall.Utilities
             public Curve Curve { get; set; }
         }
 
-        /// <summary>
+                      /// <summary>
         /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
         /// </summary>
         public static WallType GetExternalWallType(Document doc)
@@ -1544,7 +1544,9 @@ private static Curve ExtendCurveToJoinedWalls(
                     // Берем первую смещенную кривую и разворачиваем её (чтобы внутренняя грань была обращена к исходной стене)
                     Curve externalCurve = offsetCurves[0].CreateReversed();
 
-                    // Дотягиваем кривую до реальных торцов стены с учётом стыков
+                    // Дотягиваем кривую до фактических торцов исходной стены,
+                    // затем учитываем подрезку стыков
+                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
                     externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
 
                     if (externalCurve == null || externalCurve.Length < 0.01)
