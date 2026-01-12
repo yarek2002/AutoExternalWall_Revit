@@ -93,7 +93,10 @@ jobs:
 
           # Если есть папка Resources, Icons и т.п.
           Copy-Item "Revit_AutoExternalWall/Resources" -Destination "${{ env.OUTPUT_DIR }}/Resources" -Recurse -ErrorAction SilentlyContinue
-
+          
+      # 6. Создаём ZIP
+      - name: Create ZIP
+        run: Compress-Archive -Path "${{ env.OUTPUT_DIR }}/*" -DestinationPath "${{ env.OUTPUT_DIR }}.zip" -Force
 
       # 7. Загружаем артефакт (всегда видно в Actions)
       - name: Upload artifact
