@@ -1418,7 +1418,7 @@ private static Curve ExtendCurveToJoinedWalls(
     XYZ newP1 = p1 + dir * ext1;
 
     return Line.CreateBound(newP0, newP1);
-}
+        }
 
         /// <summary>
         /// Проверяет, является ли стена внешней по выбранным помещениям:
@@ -1619,7 +1619,7 @@ private static Curve ExtendCurveToJoinedWalls(
             return created;
         }
 
-        /// <summary>
+            /// <summary>
         /// Данные о boundary segment с привязкой к помещению
         /// </summary>
         private class BoundarySegmentData
@@ -1707,7 +1707,7 @@ private static Curve ExtendCurveToJoinedWalls(
         /// </summary>
         private static List<WallSegment> DivideWallByRoomBoundaries(
             Document doc,
-            Wall wall, 
+    Wall wall,
             Line axisLine, 
             List<BoundarySegmentData> segmentDataList,
             List<Room> selectedRooms)
@@ -1782,7 +1782,7 @@ private static Curve ExtendCurveToJoinedWalls(
 
                     LocationCurve otherLocation = otherWall.Location as LocationCurve;
                     if (otherLocation == null || otherLocation.Curve == null)
-                        continue;
+            continue;
 
                     if (!(otherLocation.Curve is Line otherLine))
                         continue;
@@ -1816,19 +1816,20 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Если перегородка граничит с разными выбранными комнатами - это точка разделения
                         if (roomsUsingOtherWall.Count >= 2)
                         {
-                            // Берем первую точку пересечения
-                            IntersectionResult intersection = intersections.get_Item(0);
-                            XYZ intersectionPoint = intersection.XYZPoint;
+                            // Берем середину внутренней стены (перегородки) в качестве точки разделения
+                            XYZ otherWallStart = otherLine.GetEndPoint(0);
+                            XYZ otherWallEnd = otherLine.GetEndPoint(1);
+                            XYZ middleOfOtherWall = (otherWallStart + otherWallEnd) * 0.5;
 
-                            // Проецируем точку пересечения на ось стены
-                            double t = (intersectionPoint - axisStart).DotProduct(axisDir);
+                            // Проецируем середину перегородки на ось текущей стены
+                            double t = (middleOfOtherWall - axisStart).DotProduct(axisDir);
 
                             // Добавляем только внутренние точки (не концы стены)
                             const double edgeTolerance = 0.01;
                             if (t > edgeTolerance && t < axisLength - edgeTolerance)
                             {
                                 intersectionPoints.Add(t);
-                                Log(wall.Document, $"Найдена точка разделения на стене {wall.Id} от перегородки {otherWall.Id} при t={t:F3}");
+                                Log(wall.Document, $"Найдена точка разделения на стене {wall.Id} от перегородки {otherWall.Id} при t={t:F3} (используется середина перегородки)");
                             }
                         }
                     }
@@ -1857,7 +1858,7 @@ private static Curve ExtendCurveToJoinedWalls(
                     double tEnd = splitPoints[i + 1];
 
                     if (tEnd - tStart < 0.01)
-                        continue;
+                continue;
 
                     // Находим комнату для этого интервала
                     Room roomForSegment = FindRoomForInterval(
