@@ -634,6 +634,46 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
+        /// Возвращает плановую (XY) кривую внешней грани стены.
+        /// Используется, чтобы длина создаваемой стены соответствовала реальной внешней грани,
+        /// а не осевой линии.
+        /// </summary>
+        private static Curve GetExteriorFacePlanCurve(Wall wall)
+        {
+            if (wall == null) return null;
+            try
+            {
+                var sideRefs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+                if (sideRefs == null || sideRefs.Count == 0)
+                    return null;
+
+                foreach (Reference r in sideRefs)
+                {
+                    Face face = wall.Document.GetElement(r)?.GetGeometryObjectFromReference(r) as Face;
+                    if (face == null) continue;
+
+                    foreach (EdgeArray ea in face.EdgeLoops)
+                    {
+                        foreach (Edge e in ea)
+                        {
+                            Curve c = e.AsCurve();
+                            if (c == null || !c.IsBound) continue;
+
+                            // Ищем горизонтальную (в плане) грань
+                            if (Math.Abs(c.GetEndPoint(0).Z - c.GetEndPoint(1).Z) < 1e-6)
+                            {
+                                return c;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
         /// Copy relevant properties from one wall to another
         /// </summary>
         private static void CopyWallProperties(Wall source, Wall target)
@@ -1444,22 +1484,30 @@ private static Curve ExtendCurveToJoinedWalls(
                 // Для каждой стены создаем внешнюю стену по её внешней длине
                 foreach (Wall innerWall in roomWalls)
                 {
-                    // Получаем центральную линию существующей стены
-                    LocationCurve wallLocation = innerWall.Location as LocationCurve;
-                    if (wallLocation == null || wallLocation.Curve == null)
-                    {
-                        Log(doc, $"Стена {innerWall.Id} не имеет LocationCurve");
-                        continue;
-                    }
+                    // Пытаемся взять кривую внешней грани стены (точная внешняя длина)
+                    Curve exteriorFaceCurve = GetExteriorFacePlanCurve(innerWall);
 
-                    Curve wallCenterLine = wallLocation.Curve;
-                    if (wallCenterLine == null || wallCenterLine.Length < 0.01)
+                    // Фоллбек на осевую линию, если внешняя грань недоступна
+                    if (exteriorFaceCurve == null || exteriorFaceCurve.Length < 0.01)
                     {
-                        Log(doc, $"Стена {innerWall.Id} имеет слишком короткую центральную линию");
-                        continue;
+                        LocationCurve wallLocation = innerWall.Location as LocationCurve;
+                        if (wallLocation == null || wallLocation.Curve == null)
+                        {
+                            Log(doc, $"Стена {innerWall.Id} не имеет доступной геометрии");
+                            continue;
+                        }
+                        exteriorFaceCurve = wallLocation.Curve;
+                        if (exteriorFaceCurve == null || exteriorFaceCurve.Length < 0.01)
+                        {
+                            Log(doc, $"Стена {innerWall.Id} имеет слишком короткую геометрию");
+                            continue;
+                        }
+                        Log(doc, $"Обрабатываем стену {innerWall.Id}, длина оси (fallback): {exteriorFaceCurve.Length:F3}");
                     }
-
-                    Log(doc, $"Обрабатываем стену {innerWall.Id}, длина центральной линии: {wallCenterLine.Length:F3}");
+                    else
+                    {
+                        Log(doc, $"Обрабатываем стену {innerWall.Id}, длина внешней грани: {exteriorFaceCurve.Length:F3}");
+                    }
 
                     // Получаем параметры стены
                     Level level = GetWallLevel(innerWall);
@@ -1470,26 +1518,22 @@ private static Curve ExtendCurveToJoinedWalls(
                         continue;
                     }
 
-                    // Вычисляем смещение от центральной линии внутренней стены к центральной линии внешней стены
-                    // Смещение = половина толщины внутренней стены + половина толщины внешней стены
-                    double innerThickness = GetWallThickness(innerWall);
+                    // Вычисляем смещение от внешней грани до центральной линии создаваемой стены:
+                    // берём половину толщины новой стены.
                     double externalThickness = GetWallTypeThickness(wallType);
-                    double offsetDistance = (innerThickness) + (externalThickness);
+                    double offsetDistance = externalThickness / 2.0;
 
-                    Log(doc, $"Смещение: {offsetDistance:F3} (толщина внутренней: {innerThickness:F3}, внешней: {externalThickness:F3})");
+                    Log(doc, $"Смещение: {offsetDistance:F3} (толщина внешней: {externalThickness:F3})");
 
                     // Определяем направление наружу от помещения
                     // Используем граничную кривую для определения направления
                     Curve boundaryCurve = null;
-                    if (wallBoundaryCurves.TryGetValue(innerWall.Id, out boundaryCurve))
-                    {
-                        // Используем граничную кривую только для определения направления
-                    }
-                    
-                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve ?? wallCenterLine, room);
+                    wallBoundaryCurves.TryGetValue(innerWall.Id, out boundaryCurve);
 
-                    // Смещаем центральную линию стены наружу
-                    List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(wallCenterLine, offsetDistance, outwardNormal);
+                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve ?? exteriorFaceCurve, room);
+
+                    // Смещаем внешнюю грань стены наружу
+                    List<Curve> offsetCurves = GeometryUtilities.OffsetCurve(exteriorFaceCurve, offsetDistance, outwardNormal);
                     
                     if (offsetCurves == null || offsetCurves.Count == 0)
                     {
