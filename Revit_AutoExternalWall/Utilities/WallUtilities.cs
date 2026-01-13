@@ -1785,12 +1785,70 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
             if (!(existingLocation.Curve is Line existingLine))
                 continue;
 
-            // Проверяем пересечение
+            // Проверяем пересечение осей
             IntersectionResultArray intersectionResults;
             SetComparisonResult intersection = line.Intersect(existingLine, out intersectionResults);
 
+            // Если оси не пересекаются, проверяем перпендикулярное пересечение (стена входит в существующую)
             if (intersection == SetComparisonResult.Disjoint)
+            {
+                // Проверяем, входит ли наша стена перпендикулярно в существующую
+                XYZ existingStart = existingLine.GetEndPoint(0);
+                XYZ existingEnd = existingLine.GetEndPoint(1);
+                XYZ existingDir = (existingEnd - existingStart).Normalize();
+                
+                // Проверяем, перпендикулярны ли стены (или близки к перпендикулярным)
+                double dotProduct = Math.Abs(dir.DotProduct(existingDir));
+                const double perpendicularTolerance = 0.1; // ~85-95 градусов
+                
+                if (dotProduct > perpendicularTolerance)
+                {
+                    // Стены не перпендикулярны, пропускаем
+                    continue;
+                }
+                
+                // Проецируем концы нашей стены на ось существующей
+                double tStart = (start - existingStart).DotProduct(existingDir);
+                double tEnd = (end - existingStart).DotProduct(existingDir);
+                
+                // Проверяем, попадают ли концы нашей стены внутрь существующей стены
+                double existingLength = existingLine.Length;
+                double existingHalfThickness = GetWallThickness(existingWall) / 2.0;
+                double ourHalfThickness = GetWallThickness(excludeWall) / 2.0;
+                
+                // Вычисляем расстояние от нашей стены до оси существующей
+                XYZ existingNormal = new XYZ(-existingDir.Y, existingDir.X, 0.0).Normalize();
+                double distToExistingAxis = Math.Abs((start - existingStart).DotProduct(existingNormal));
+                
+                // Если наша стена находится близко к оси существующей (с учетом толщины) 
+                // и её концы попадают внутрь существующей
+                if (distToExistingAxis < existingHalfThickness + ourHalfThickness + 0.1)
+                {
+                    // Проверяем, входит ли наша стена в существующую
+                    // Проецируем границы существующей стены на нашу ось
+                    double paramExistingStart = (existingStart - start).DotProduct(dir);
+                    double paramExistingEnd = (existingEnd - start).DotProduct(dir);
+                    
+                    // Если хотя бы один конец нашей стены попадает внутрь существующей
+                    bool startInside = (tStart > 0 && tStart < existingLength);
+                    bool endInside = (tEnd > 0 && tEnd < existingLength);
+                    
+                    if (startInside || endInside)
+                    {
+                        // Обрезаем части, которые входят в существующую стену
+                        if (paramExistingStart > minParam && paramExistingStart < maxParam)
+                        {
+                            maxParam = Math.Min(maxParam, paramExistingStart);
+                        }
+                        if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
+                        {
+                            minParam = Math.Max(minParam, paramExistingEnd);
+                        }
+                    }
+                }
+                
                 continue;
+            }
 
             // Обрабатываем точки пересечения
             if (intersectionResults != null && intersectionResults.Size > 0)
