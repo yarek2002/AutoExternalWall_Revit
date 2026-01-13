@@ -1456,7 +1456,7 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 
 /// <summary>
 /// Вычисляет длину продления с учетом угла между стенами
-/// Находит конечную точку внешней грани примыкающей стены в углу и продлевает до неё
+/// Находит точку пересечения линии продления с внешней гранью примыкающей стены
 /// </summary>
 private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
@@ -1480,32 +1480,80 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
         if (endIndex == 0) sourceDir = -sourceDir;
 
-        // Находим точку на оси примыкающей стены, ближайшую к концу исходной стены (угол)
-        XYZ adjStart = adjacentAxis.GetEndPoint(0);
-        XYZ adjEnd = adjacentAxis.GetEndPoint(1);
-        XYZ adjDir = (adjEnd - adjStart).Normalize();
+        // Определяем направление нормали к исходной стене (наружу)
+        // Нужно получить правильное направление наружу от помещения
+        XYZ sourceNormal = GetWallFaceNormal(sourceWall);
         
-        // Проецируем конец исходной стены на ось примыкающей
-        double t = (sourceEndPoint - adjStart).DotProduct(adjDir);
-        t = Math.Max(0, Math.Min(adjacentAxis.Length, t));
-        XYZ adjCornerPoint = adjStart + adjDir * t;
-
-        // Получаем конечную точку внешней грани примыкающей стены в углу
-        XYZ adjExteriorEndPoint = GetExteriorFaceEndPoint(adjacentWall, adjCornerPoint);
-        
-        if (adjExteriorEndPoint == null)
+        // Получаем внешнюю грань примыкающей стены
+        var sideRefs = HostObjectUtils.GetSideFaces(adjacentWall, ShellLayerType.Exterior);
+        if (sideRefs == null || sideRefs.Count == 0)
         {
-            // Если не удалось получить точку, используем стандартное значение
             return GetWallThickness(sourceWall) / 2.0;
         }
 
-        // Проецируем конечную точку внешней грани примыкающей стены на ось исходной стены
-        // Вычисляем расстояние продления
-        double extension = (adjExteriorEndPoint - sourceEndPoint).DotProduct(sourceDir);
+        // Строим линию продления: от конца оси исходной стены в направлении нормали
+        // Эта линия должна пересечь внешнюю грань примыкающей стены
+        Line extensionLine = Line.CreateUnbound(sourceEndPoint, sourceNormal);
 
-        // Если extension отрицательное, значит точка находится "позади" конца стены
-        if (extension < 0)
+        // Находим точку пересечения линии продления с внешней гранью примыкающей стены
+        XYZ intersectionPoint = null;
+        double minDistance = double.MaxValue;
+
+        foreach (Reference r in sideRefs)
         {
+            Face face = adjacentWall.Document.GetElement(r)?.GetGeometryObjectFromReference(r) as Face;
+            if (face == null) continue;
+
+            // Находим пересечение линии продления с краями грани
+            foreach (EdgeArray ea in face.EdgeLoops)
+            {
+                foreach (Edge e in ea)
+                {
+                    Curve c = e.AsCurve();
+                    if (c == null || !c.IsBound) continue;
+
+                    // Ищем горизонтальные (в плане) края
+                    if (Math.Abs(c.GetEndPoint(0).Z - c.GetEndPoint(1).Z) < 1e-6)
+                    {
+                        IntersectionResultArray intersectionResults;
+                        SetComparisonResult intersection = extensionLine.Intersect(c, out intersectionResults);
+
+                        if (intersection != SetComparisonResult.Disjoint && 
+                            intersectionResults != null && intersectionResults.Size > 0)
+                        {
+                            for (int i = 0; i < intersectionResults.Size; i++)
+                            {
+                                XYZ point = intersectionResults.get_Item(i).XYZPoint;
+                                double dist = sourceEndPoint.DistanceTo(point);
+                                
+                                // Выбираем ближайшую точку пересечения в разумных пределах
+                                if (dist < minDistance && dist < 50.0 && dist > 0.01)
+                                {
+                                    minDistance = dist;
+                                    intersectionPoint = point;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (intersectionPoint == null)
+        {
+            // Если не нашли пересечение, используем стандартное значение
+            return GetWallThickness(sourceWall) / 2.0;
+        }
+
+        // Вычисляем расстояние от конца оси исходной стены до точки пересечения
+        // Расстояние - это длина вектора от sourceEndPoint до intersectionPoint
+        double extension = sourceEndPoint.DistanceTo(intersectionPoint);
+
+        // Проверяем, что продление идет в правильном направлении
+        XYZ toIntersection = (intersectionPoint - sourceEndPoint).Normalize();
+        if (toIntersection.DotProduct(sourceNormal) < 0)
+        {
+            // Точка находится в неправильном направлении
             return GetWallThickness(sourceWall) / 2.0;
         }
 
