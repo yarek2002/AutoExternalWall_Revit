@@ -1456,7 +1456,7 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 
 /// <summary>
 /// Вычисляет длину продления с учетом угла между стенами
-/// Находит точку пересечения внешних граней стен геометрически
+/// Использует реальные внешние грани стен для точного определения точки пересечения
 /// </summary>
 private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
@@ -1468,97 +1468,118 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
     try
     {
         LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
-        LocationCurve adjacentLocation = adjacentWall.Location as LocationCurve;
-        
         if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
-            return GetWallThickness(sourceWall) / 2.0;
-        
-        if (adjacentLocation == null || !(adjacentLocation.Curve is Line adjacentAxis))
             return GetWallThickness(sourceWall) / 2.0;
 
         XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
         if (endIndex == 0) sourceDir = -sourceDir;
 
-        // Определяем направление примыкающей стены (к концу исходной)
-        XYZ adjStart = adjacentAxis.GetEndPoint(0);
-        XYZ adjEnd = adjacentAxis.GetEndPoint(1);
-        XYZ adjDir = (adjEnd - adjStart).Normalize();
-        
-        // Выбираем направление, которое указывает к концу исходной стены
-        if (sourceEndPoint.DistanceTo(adjStart) > sourceEndPoint.DistanceTo(adjEnd))
+        // Получаем горизонтальные (плановые) края внешних граней стен
+        List<Line> sourceExteriorEdges = GetExteriorFaceEdges(sourceWall);
+        List<Line> adjExteriorEdges = GetExteriorFaceEdges(adjacentWall);
+
+        if (sourceExteriorEdges == null || sourceExteriorEdges.Count == 0 ||
+            adjExteriorEdges == null || adjExteriorEdges.Count == 0)
         {
-            adjDir = -adjDir;
+            // Если не удалось получить грани, используем стандартное значение
+            return GetWallThickness(sourceWall) / 2.0;
         }
 
-        // Получаем толщины стен
-        double sourceHalfWidth = GetWallThickness(sourceWall) / 2.0;
-        double adjHalfWidth = GetWallThickness(adjacentWall) / 2.0;
-        
-        // Вычисляем угол между направлениями стен
-        double dotProduct = sourceDir.DotProduct(adjDir);
-        dotProduct = Math.Max(-1.0, Math.Min(1.0, dotProduct));
-        double angle = Math.Acos(dotProduct);
-        
-        // Определяем правильное направление нормали для исходной стены
-        // Нормаль должна быть перпендикулярна направлению стены
-        // Выбираем ту нормаль, которая указывает в сторону от угла (к внешней стороне)
-        XYZ sourceNormal1 = new XYZ(-sourceDir.Y, sourceDir.X, 0.0).Normalize();
-        XYZ sourceNormal2 = -sourceNormal1;
-        
-        // Вектор от конца исходной стены к ближайшей точке примыкающей стены
-        double tOnAdjacent = (sourceEndPoint - adjStart).DotProduct(adjDir);
-        tOnAdjacent = Math.Max(0, Math.Min(adjacentAxis.Length, tOnAdjacent));
-        XYZ adjCornerPoint = adjStart + adjDir * tOnAdjacent;
-        XYZ toAdjacent = (adjCornerPoint - sourceEndPoint).Normalize();
-        
-        // Выбираем нормаль, которая указывает в сторону от угла
-        // Если нормаль указывает в сторону примыкающей стены, инвертируем её
-        XYZ sourceNormal = (sourceNormal1.DotProduct(toAdjacent) > 0) ? sourceNormal2 : sourceNormal1;
-        
-        // Аналогично для примыкающей стены
-        XYZ adjNormal1 = new XYZ(-adjDir.Y, adjDir.X, 0.0).Normalize();
-        XYZ adjNormal2 = -adjNormal1;
-        XYZ fromAdjacent = (sourceEndPoint - adjCornerPoint).Normalize();
-        XYZ adjNormal = (adjNormal1.DotProduct(fromAdjacent) > 0) ? adjNormal2 : adjNormal1;
-        
-        // Строим линии внешних граней (смещенные от осей на половину толщины)
-        // Внешняя грань исходной стены проходит через точку на расстоянии halfWidth от оси
-        XYZ sourceExteriorPoint = sourceEndPoint + sourceNormal * sourceHalfWidth;
-        Line sourceExteriorLine = Line.CreateUnbound(sourceExteriorPoint, sourceDir);
-        
-        // Внешняя грань примыкающей стены
-        XYZ adjExteriorPoint = adjCornerPoint + adjNormal * adjHalfWidth;
-        Line adjExteriorLine = Line.CreateUnbound(adjExteriorPoint, adjDir);
-        
-        // Находим точку пересечения внешних граней
-        IntersectionResultArray intersectionResults;
-        SetComparisonResult intersection = sourceExteriorLine.Intersect(adjExteriorLine, out intersectionResults);
-        
-        if (intersection == SetComparisonResult.Disjoint || intersectionResults == null || intersectionResults.Size == 0)
+        // Находим точку пересечения краев внешних граней
+        XYZ intersectionPoint = null;
+        double minDistance = double.MaxValue;
+
+        foreach (Line sourceEdge in sourceExteriorEdges)
+        {
+            foreach (Line adjEdge in adjExteriorEdges)
+            {
+                IntersectionResultArray intersectionResults;
+                SetComparisonResult intersection = sourceEdge.Intersect(adjEdge, out intersectionResults);
+
+                if (intersection == SetComparisonResult.Intersect && 
+                    intersectionResults != null && intersectionResults.Size > 0)
+                {
+                    XYZ point = intersectionResults.get_Item(0).XYZPoint;
+                    
+                    // Проверяем, что точка находится вблизи конца исходной стены
+                    double distToEnd = sourceEndPoint.DistanceTo(point);
+                    if (distToEnd < minDistance && distToEnd < 50.0) // Максимум 50 футов
+                    {
+                        minDistance = distToEnd;
+                        intersectionPoint = point;
+                    }
+                }
+            }
+        }
+
+        if (intersectionPoint == null)
         {
             // Если не нашли пересечение, используем стандартное значение
-            return sourceHalfWidth;
+            return GetWallThickness(sourceWall) / 2.0;
         }
-        
-        XYZ intersectionPoint = intersectionResults.get_Item(0).XYZPoint;
-        
+
         // Вычисляем расстояние от конца оси исходной стены до точки пересечения
         // Проецируем точку пересечения на ось исходной стены
         double extension = (intersectionPoint - sourceEndPoint).DotProduct(sourceDir);
-        
+
         // Если extension отрицательное, значит точка пересечения находится "позади" конца стены
         if (extension < 0)
         {
-            return sourceHalfWidth;
+            return GetWallThickness(sourceWall) / 2.0;
         }
-        
+
         return extension;
     }
     catch
     {
         return GetWallThickness(sourceWall) / 2.0;
     }
+}
+
+/// <summary>
+/// Получает горизонтальные (плановые) края внешней грани стены
+/// </summary>
+private static List<Line> GetExteriorFaceEdges(Wall wall)
+{
+    List<Line> edges = new List<Line>();
+    
+    if (wall == null || wall.Document == null)
+        return edges;
+
+    try
+    {
+        var sideRefs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+        if (sideRefs == null || sideRefs.Count == 0)
+            return edges;
+
+        foreach (Reference r in sideRefs)
+        {
+            Face face = wall.Document.GetElement(r)?.GetGeometryObjectFromReference(r) as Face;
+            if (face == null) continue;
+
+            foreach (EdgeArray ea in face.EdgeLoops)
+            {
+                foreach (Edge e in ea)
+                {
+                    Curve c = e.AsCurve();
+                    if (c == null || !c.IsBound) continue;
+
+                    // Ищем горизонтальные (в плане) края
+                    if (Math.Abs(c.GetEndPoint(0).Z - c.GetEndPoint(1).Z) < 1e-6)
+                    {
+                        if (c is Line line)
+                        {
+                            edges.Add(line);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch { }
+
+    return edges;
 }
 
         private static double GetJoinExtensionLength(
