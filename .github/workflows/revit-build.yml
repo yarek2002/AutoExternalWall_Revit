@@ -70,48 +70,61 @@ jobs:
         working-directory: Revit_AutoExternalWall
         run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU /p:ReferencePath=..\libs\Revit2021
 
-      # 5. Создаём ZIP НАПРЯМУЮ из нужных файлов
-      - name: Create ZIP directly
-        run: |
-          # Удаляем старый ZIP если есть
-          if (Test-Path "${{ env.ZIP_NAME }}.zip") {
-            Remove-Item "${{ env.ZIP_NAME }}.zip" -Force
-          }
-          
-          # Создаем временную папку
-          $tempDir = "temp_package"
-          if (Test-Path $tempDir) {
-            Remove-Item $tempDir -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $tempDir -Force
-          
-          # Копируем ТОЛЬКО нужные файлы из bin/Release
-          $source = "Revit_AutoExternalWall/bin/${{ env.CONFIG }}"
-          Get-ChildItem $source -File | Where-Object {
-            $_.Extension -in @('.dll', '.exe', '.config', '.pdb', '.xml')
-          } | ForEach-Object {
-            Copy-Item $_.FullName -Destination "$tempDir/"
-          }
-          
-          # Копируем .addin файлы
-          Get-ChildItem -Path . -Filter "*.addin" -Recurse | ForEach-Object {
-            Copy-Item $_.FullName -Destination "$tempDir/"
-          }
-          
-          # Копируем Resources если есть
-          if (Test-Path "Revit_AutoExternalWall/Resources") {
-            Copy-Item "Revit_AutoExternalWall/Resources" -Destination "$tempDir/Resources" -Recurse -Force
-          }
-          
-          # Создаем ZIP из временной папки
-          Compress-Archive -Path "$tempDir/*" -DestinationPath "${{ env.ZIP_NAME }}.zip" -Force
-          
-          # Очищаем временную папку
-          Remove-Item $tempDir -Recurse -Force
-          
-          # Проверяем что в ZIP
-          Write-Host "ZIP file created: ${{ env.ZIP_NAME }}.zip"
-          Write-Host "File size: $( (Get-Item '${{ env.ZIP_NAME }}.zip').Length / 1MB ) MB"
+# 5. Создаём ZIP НАПРЯМУЮ из нужных файлов
+- name: Create ZIP directly
+  run: |
+    # Удаляем старый ZIP если есть
+    if (Test-Path "${{ env.ZIP_NAME }}.zip") {
+      Remove-Item "${{ env.ZIP_NAME }}.zip" -Force
+    }
+    
+    # Создаем временную папку
+    $tempDir = "temp_package_$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $tempDir -Force
+    
+    # Копируем ТОЛЬКО нужные файлы из bin/Release
+    $source = "Revit_AutoExternalWall/bin/${{ env.CONFIG }}"
+    if (Test-Path $source) {
+      # Копируем все файлы кроме .zip
+      Get-ChildItem $source -File | Where-Object {
+        $_.Extension -ne '.zip'
+      } | ForEach-Object {
+        Copy-Item $_.FullName -Destination "$tempDir/"
+      }
+    }
+    
+    # Копируем .addin файлы из корня проекта (если есть)
+    if (Test-Path "*.addin") {
+      Get-ChildItem -Path "." -Filter "*.addin" | ForEach-Object {
+        Copy-Item $_ -Destination "$tempDir/" -Force
+      }
+    }
+    
+    # Копируем .addin файлы из папки Revit_AutoExternalWall (если есть)
+    if (Test-Path "Revit_AutoExternalWall/*.addin") {
+      Get-ChildItem -Path "Revit_AutoExternalWall" -Filter "*.addin" | ForEach-Object {
+        Copy-Item $_ -Destination "$tempDir/" -Force
+      }
+    }
+    
+    # Копируем Resources если есть
+    if (Test-Path "Revit_AutoExternalWall/Resources") {
+      Copy-Item "Revit_AutoExternalWall/Resources" -Destination "$tempDir/Resources" -Recurse -Force
+    }
+    
+    # Проверяем что скопировалось
+    Write-Host "Contents of $tempDir:"
+    Get-ChildItem "$tempDir" -Recurse | Format-Table Name, Length
+    
+    # Создаем ZIP из временной папки
+    Compress-Archive -Path "$tempDir/*" -DestinationPath "${{ env.ZIP_NAME }}.zip" -Force
+    
+    # Очищаем временную папку
+    Remove-Item $tempDir -Recurse -Force
+    
+    # Проверяем что в ZIP
+    Write-Host "ZIP file created: ${{ env.ZIP_NAME }}.zip"
+    Write-Host "File size: $( (Get-Item '${{ env.ZIP_NAME }}.zip').Length / 1MB ) MB"
 
       # 6. Загружаем артефакт
       - name: Upload artifact
