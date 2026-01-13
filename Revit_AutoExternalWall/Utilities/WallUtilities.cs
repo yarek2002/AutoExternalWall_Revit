@@ -1568,18 +1568,31 @@ private static Curve ExtendCurveToJoinedWalls(
                     double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
 
                     // Создаем внешнюю стену для каждого сегмента
-                    foreach (WallSegment segment in wallSegments)
+                    for (int segIndex = 0; segIndex < wallSegments.Count; segIndex++)
                     {
+                        WallSegment segment = wallSegments[segIndex];
+                        
                         // Определяем направление наружу для этого сегмента
                         XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
 
-                        // Строим ось внешней стены для сегмента строго по его границам (без растягивания)
+                        // Строим ось внешней стены для сегмента
                         XYZ segStart = segment.Curve.GetEndPoint(0);
                         XYZ segEnd = segment.Curve.GetEndPoint(1);
                         XYZ externalStart = segStart + outwardNormal * offsetDistance;
                         XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
 
                         Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+
+                        // Для крайних сегментов (первого и последнего) растягиваем до углов
+                        // Для внутренних сегментов не растягиваем, чтобы избежать перекрытий
+                        bool isFirstSegment = (segIndex == 0);
+                        bool isLastSegment = (segIndex == wallSegments.Count - 1);
+                        
+                        if (isFirstSegment || isLastSegment)
+                        {
+                            externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                            externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+                        }
 
                         if (externalCurve == null || externalCurve.Length < 0.01)
                             continue;
