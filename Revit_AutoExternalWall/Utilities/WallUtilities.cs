@@ -1745,7 +1745,7 @@ private static List<Line> GetExteriorFaceEdges(Wall wall)
 /// Обрезает кривую, если она пересекается с существующими стенами
 /// Возвращает обрезанную кривую или null, если кривая полностью пересекается
 /// </summary>
-private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wall excludeWall)
+private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wall excludeWall, HashSet<ElementId> excludeCreatedWalls = null)
 {
     if (doc == null || curve == null || !(curve is Line line))
         return curve;
@@ -1755,7 +1755,7 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
 
     try
     {
-        // Получаем все стены в документе, кроме исключаемой
+        // Получаем все стены в документе, кроме исключаемой и созданных в этой транзакции
         FilteredElementCollector collector = new FilteredElementCollector(doc)
             .OfClass(typeof(Wall))
             .WhereElementIsNotElementType();
@@ -1772,6 +1772,10 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
         {
             // Пропускаем исключаемую стену
             if (existingWall.Id == excludeWall.Id)
+                continue;
+            
+            // Пропускаем созданные в этой транзакции стены (они могут пересекать друг друга)
+            if (excludeCreatedWalls != null && excludeCreatedWalls.Contains(existingWall.Id))
                 continue;
 
             LocationCurve existingLocation = existingWall.Location as LocationCurve;
@@ -2015,6 +2019,9 @@ private static Curve ExtendCurveToJoinedWalls(
 
                 Log(doc, $"Найдено уникальных стен: {segmentsByWall.Count}");
 
+                // Список ID созданных стен для исключения из проверки пересечений
+                HashSet<ElementId> createdWallIds = new HashSet<ElementId>();
+
                 // Обрабатываем каждую стену
                 foreach (var kvp in segmentsByWall)
                 {
@@ -2126,7 +2133,8 @@ private static Curve ExtendCurveToJoinedWalls(
                             continue;
 
                         // Проверяем пересечение с существующими стенами и обрезаем при необходимости
-                        externalCurve = TrimCurveAgainstExistingWalls(doc, externalCurve, innerWall);
+                        // Исключаем из проверки уже созданные в этой транзакции стены
+                        externalCurve = TrimCurveAgainstExistingWalls(doc, externalCurve, innerWall, createdWallIds);
                         if (externalCurve == null || externalCurve.Length < 0.01)
                             continue;
 
@@ -2147,6 +2155,8 @@ private static Curve ExtendCurveToJoinedWalls(
                             DisableWallJoins(externalWall);
                             CopyWallProperties(innerWall, externalWall);
                             created++;
+                            // Добавляем ID созданной стены в список для исключения из проверки
+                            createdWallIds.Add(externalWall.Id);
                             Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id}");
                         }
                     }
@@ -2497,6 +2507,8 @@ private static Curve ExtendCurveToJoinedWalls(
                 return 0;
 
             int created = 0;
+            // Список ID созданных стен для исключения из проверки пересечений
+            HashSet<ElementId> createdWallIds = new HashSet<ElementId>();
 
             try
             {
@@ -2630,7 +2642,8 @@ private static Curve ExtendCurveToJoinedWalls(
                     }
 
                     // Проверяем пересечение с существующими стенами и обрезаем при необходимости
-                    externalCurve = TrimCurveAgainstExistingWalls(doc, externalCurve, innerWall);
+                    // Исключаем из проверки уже созданные в этой транзакции стены
+                    externalCurve = TrimCurveAgainstExistingWalls(doc, externalCurve, innerWall, createdWallIds);
                     if (externalCurve == null || externalCurve.Length < 0.01)
                     {
                         Log(doc, $"Кривая обрезана до нуля для стены {innerWall.Id}");
@@ -2658,6 +2671,8 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Копируем свойства из внутренней стены
                         CopyWallProperties(innerWall, externalWall);
                         created++;
+                        // Добавляем ID созданной стены в список для исключения из проверки
+                        createdWallIds.Add(externalWall.Id);
                         Log(doc, $"Создана внешняя стена {externalWall.Id} для внутренней стены {innerWall.Id}");
                     }
                     else
