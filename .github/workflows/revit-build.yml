@@ -148,11 +148,11 @@ jobs:
           Write-Host "File size: $((Get-Item '${{ env.ZIP_NAME }}.zip').Length / 1MB) MB"
 
       # 6. Загружаем артефакт
-      - name: Upload artifact
+      - name: Upload artifact (as folder)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_NAME }}-${{ github.sha }}
-          path: ${{ env.ZIP_NAME }}.zip
+          name: Revit_AutoExternalWall-2021-${{ github.sha }}
+          path: temp_package/  # Загружаем папку, а не ZIP
 
       # 7. Создаём GitHub Release
       - name: Create GitHub Release
