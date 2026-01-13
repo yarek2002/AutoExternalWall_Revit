@@ -1738,8 +1738,144 @@ private static List<Line> GetExteriorFaceEdges(Wall wall)
         return GetWallThickness(other) / 2.0;
     }
 
-    return 0.0;
+        return 0.0;
 }
+
+/// <summary>
+/// Обрезает кривую, если она пересекается с существующими стенами
+/// Возвращает обрезанную кривую или null, если кривая полностью пересекается
+/// </summary>
+private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wall excludeWall)
+{
+    if (doc == null || curve == null || !(curve is Line line))
+        return curve;
+
+    if (excludeWall == null)
+        return curve;
+
+    try
+    {
+        // Получаем все стены в документе, кроме исключаемой
+        FilteredElementCollector collector = new FilteredElementCollector(doc)
+            .OfClass(typeof(Wall))
+            .WhereElementIsNotElementType();
+
+        XYZ start = line.GetEndPoint(0);
+        XYZ end = line.GetEndPoint(1);
+        XYZ dir = (end - start).Normalize();
+        
+        double minParam = 0.0;
+        double maxParam = line.Length;
+        const double minLength = 0.1; // Минимальная длина стены (10 см)
+
+        foreach (Wall existingWall in collector.Cast<Wall>())
+        {
+            // Пропускаем исключаемую стену
+            if (existingWall.Id == excludeWall.Id)
+                continue;
+
+            LocationCurve existingLocation = existingWall.Location as LocationCurve;
+            if (existingLocation == null || existingLocation.Curve == null)
+                continue;
+
+            if (!(existingLocation.Curve is Line existingLine))
+                continue;
+
+            // Проверяем пересечение
+            IntersectionResultArray intersectionResults;
+            SetComparisonResult intersection = line.Intersect(existingLine, out intersectionResults);
+
+            if (intersection == SetComparisonResult.Disjoint)
+                continue;
+
+            // Обрабатываем точки пересечения
+            if (intersectionResults != null && intersectionResults.Size > 0)
+            {
+                for (int i = 0; i < intersectionResults.Size; i++)
+                {
+                    XYZ intersectionPoint = intersectionResults.get_Item(i).XYZPoint;
+                    
+                    // Вычисляем параметр точки пересечения на нашей кривой
+                    double param = (intersectionPoint - start).DotProduct(dir);
+                    
+                    // Если точка пересечения находится в начале кривой, обрезаем начало
+                    if (param < minParam + 0.01)
+                    {
+                        minParam = Math.Max(minParam, param + 0.01);
+                    }
+                    // Если точка пересечения находится в конце кривой, обрезаем конец
+                    else if (param > maxParam - 0.01)
+                    {
+                        maxParam = Math.Min(maxParam, param - 0.01);
+                    }
+                    // Если точка пересечения внутри кривой, обрезаем до неё
+                    else
+                    {
+                        // Определяем, с какой стороны обрезать
+                        // Обрезаем ту сторону, которая ближе к точке пересечения
+                        double distToStart = param;
+                        double distToEnd = maxParam - param;
+                        
+                        if (distToStart < distToEnd)
+                        {
+                            minParam = Math.Max(minParam, param + 0.01);
+                        }
+                        else
+                        {
+                            maxParam = Math.Min(maxParam, param - 0.01);
+                        }
+                    }
+                }
+            }
+            // Если кривые перекрываются полностью
+            else if (intersection == SetComparisonResult.Overlap || 
+                     intersection == SetComparisonResult.Subset || 
+                     intersection == SetComparisonResult.Superset)
+            {
+                // Проверяем, перекрывается ли наша кривая с существующей
+                // Если да, обрезаем до границ существующей стены
+                XYZ existingStart = existingLine.GetEndPoint(0);
+                XYZ existingEnd = existingLine.GetEndPoint(1);
+                
+                double paramExistingStart = (existingStart - start).DotProduct(dir);
+                double paramExistingEnd = (existingEnd - start).DotProduct(dir);
+                
+                // Если наша кривая полностью внутри существующей - не создаем
+                if (paramExistingStart <= minParam && paramExistingEnd >= maxParam)
+                {
+                    return null;
+                }
+                
+                // Обрезаем перекрывающиеся части
+                if (paramExistingStart > minParam && paramExistingStart < maxParam)
+                {
+                    maxParam = Math.Min(maxParam, paramExistingStart - 0.01);
+                }
+                if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
+                {
+                    minParam = Math.Max(minParam, paramExistingEnd + 0.01);
+                }
+            }
+        }
+
+        // Проверяем, осталась ли достаточная длина
+        if (maxParam - minParam < minLength)
+        {
+            return null;
+        }
+
+        // Создаем обрезанную кривую
+        XYZ newStart = start + dir * minParam;
+        XYZ newEnd = start + dir * maxParam;
+        
+        return Line.CreateBound(newStart, newEnd);
+    }
+    catch
+    {
+        return curve;
+    }
+}
+
 private static Curve ExtendCurveToJoinedWalls(
     Wall sourceWall,
     Curve curve
@@ -1985,6 +2121,11 @@ private static Curve ExtendCurveToJoinedWalls(
                             }
                         }
 
+                        if (externalCurve == null || externalCurve.Length < 0.01)
+                            continue;
+
+                        // Проверяем пересечение с существующими стенами и обрезаем при необходимости
+                        externalCurve = TrimCurveAgainstExistingWalls(doc, externalCurve, innerWall);
                         if (externalCurve == null || externalCurve.Length < 0.01)
                             continue;
 
@@ -2484,6 +2625,14 @@ private static Curve ExtendCurveToJoinedWalls(
                     if (externalCurve == null || externalCurve.Length < 0.01)
                     {
                         Log(doc, $"Смещенная кривая слишком короткая для стены {innerWall.Id}");
+                        continue;
+                    }
+
+                    // Проверяем пересечение с существующими стенами и обрезаем при необходимости
+                    externalCurve = TrimCurveAgainstExistingWalls(doc, externalCurve, innerWall);
+                    if (externalCurve == null || externalCurve.Length < 0.01)
+                    {
+                        Log(doc, $"Кривая обрезана до нуля для стены {innerWall.Id}");
                         continue;
                     }
 
