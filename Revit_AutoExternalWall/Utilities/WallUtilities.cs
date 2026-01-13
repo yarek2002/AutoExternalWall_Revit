@@ -1456,7 +1456,7 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 
 /// <summary>
 /// Вычисляет длину продления с учетом угла между стенами
-/// Использует реальные внешние грани стен для точного определения точки пересечения
+/// Находит конечную точку внешней грани примыкающей стены в углу и продлевает до неё
 /// </summary>
 private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
@@ -1468,62 +1468,42 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
     try
     {
         LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
+        LocationCurve adjacentLocation = adjacentWall.Location as LocationCurve;
+        
         if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
+            return GetWallThickness(sourceWall) / 2.0;
+        
+        if (adjacentLocation == null || !(adjacentLocation.Curve is Line adjacentAxis))
             return GetWallThickness(sourceWall) / 2.0;
 
         XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
         if (endIndex == 0) sourceDir = -sourceDir;
 
-        // Получаем горизонтальные (плановые) края внешних граней стен
-        List<Line> sourceExteriorEdges = GetExteriorFaceEdges(sourceWall);
-        List<Line> adjExteriorEdges = GetExteriorFaceEdges(adjacentWall);
+        // Находим точку на оси примыкающей стены, ближайшую к концу исходной стены (угол)
+        XYZ adjStart = adjacentAxis.GetEndPoint(0);
+        XYZ adjEnd = adjacentAxis.GetEndPoint(1);
+        XYZ adjDir = (adjEnd - adjStart).Normalize();
+        
+        // Проецируем конец исходной стены на ось примыкающей
+        double t = (sourceEndPoint - adjStart).DotProduct(adjDir);
+        t = Math.Max(0, Math.Min(adjacentAxis.Length, t));
+        XYZ adjCornerPoint = adjStart + adjDir * t;
 
-        if (sourceExteriorEdges == null || sourceExteriorEdges.Count == 0 ||
-            adjExteriorEdges == null || adjExteriorEdges.Count == 0)
+        // Получаем конечную точку внешней грани примыкающей стены в углу
+        XYZ adjExteriorEndPoint = GetExteriorFaceEndPoint(adjacentWall, adjCornerPoint);
+        
+        if (adjExteriorEndPoint == null)
         {
-            // Если не удалось получить грани, используем стандартное значение
+            // Если не удалось получить точку, используем стандартное значение
             return GetWallThickness(sourceWall) / 2.0;
         }
 
-        // Находим точку пересечения краев внешних граней
-        XYZ intersectionPoint = null;
-        double minDistance = double.MaxValue;
+        // Проецируем конечную точку внешней грани примыкающей стены на ось исходной стены
+        // Вычисляем расстояние продления
+        double extension = (adjExteriorEndPoint - sourceEndPoint).DotProduct(sourceDir);
 
-        foreach (Line sourceEdge in sourceExteriorEdges)
-        {
-            foreach (Line adjEdge in adjExteriorEdges)
-            {
-                IntersectionResultArray intersectionResults;
-                SetComparisonResult intersection = sourceEdge.Intersect(adjEdge, out intersectionResults);
-
-                if (intersection != SetComparisonResult.Disjoint && 
-                    intersectionResults != null && intersectionResults.Size > 0)
-                {
-                    XYZ point = intersectionResults.get_Item(0).XYZPoint;
-                    
-                    // Проверяем, что точка находится вблизи конца исходной стены
-                    double distToEnd = sourceEndPoint.DistanceTo(point);
-                    if (distToEnd < minDistance && distToEnd < 50.0) // Максимум 50 футов
-                    {
-                        minDistance = distToEnd;
-                        intersectionPoint = point;
-                    }
-                }
-            }
-        }
-
-        if (intersectionPoint == null)
-        {
-            // Если не нашли пересечение, используем стандартное значение
-            return GetWallThickness(sourceWall) / 2.0;
-        }
-
-        // Вычисляем расстояние от конца оси исходной стены до точки пересечения
-        // Проецируем точку пересечения на ось исходной стены
-        double extension = (intersectionPoint - sourceEndPoint).DotProduct(sourceDir);
-
-        // Если extension отрицательное, значит точка пересечения находится "позади" конца стены
+        // Если extension отрицательное, значит точка находится "позади" конца стены
         if (extension < 0)
         {
             return GetWallThickness(sourceWall) / 2.0;
@@ -1535,6 +1515,107 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
     {
         return GetWallThickness(sourceWall) / 2.0;
     }
+}
+
+/// <summary>
+/// Получает конечную точку внешней грани стены в указанной точке на оси стены
+/// </summary>
+private static XYZ GetExteriorFaceEndPoint(Wall wall, XYZ axisPoint)
+{
+    if (wall == null || wall.Document == null || axisPoint == null)
+        return null;
+
+    try
+    {
+        var sideRefs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+        if (sideRefs == null || sideRefs.Count == 0)
+            return null;
+
+        LocationCurve wallLocation = wall.Location as LocationCurve;
+        if (wallLocation == null || !(wallLocation.Curve is Line wallAxis))
+            return null;
+
+        // Определяем направление нормали к стене (наружу)
+        XYZ wallDir = (wallAxis.GetEndPoint(1) - wallAxis.GetEndPoint(0)).Normalize();
+        XYZ wallNormal = new XYZ(-wallDir.Y, wallDir.X, 0.0).Normalize();
+        
+        // Определяем, какая нормаль указывает наружу
+        // Для этого находим ближайшую точку на оси к axisPoint
+        double t = (axisPoint - wallAxis.GetEndPoint(0)).DotProduct(wallDir);
+        t = Math.Max(0, Math.Min(wallAxis.Length, t));
+        XYZ closestPointOnAxis = wallAxis.GetEndPoint(0) + wallDir * t;
+        
+        // Получаем внешнюю грань и находим ближайшую точку на её краях
+        double minDistance = double.MaxValue;
+        XYZ closestPoint = null;
+        double halfWidth = GetWallThickness(wall) / 2.0;
+        
+        foreach (Reference r in sideRefs)
+        {
+            Face face = wall.Document.GetElement(r)?.GetGeometryObjectFromReference(r) as Face;
+            if (face == null) continue;
+
+            // Находим ближайшую точку на краях грани к точке на оси
+            foreach (EdgeArray ea in face.EdgeLoops)
+            {
+                foreach (Edge e in ea)
+                {
+                    Curve c = e.AsCurve();
+                    if (c == null || !c.IsBound) continue;
+
+                    // Ищем горизонтальные (в плане) края
+                    if (Math.Abs(c.GetEndPoint(0).Z - c.GetEndPoint(1).Z) < 1e-6)
+                    {
+                        // Находим ближайшую точку на краю к axisPoint
+                        // Используем простой алгоритм: проверяем оба конца и середину
+                        XYZ p0 = c.GetEndPoint(0);
+                        XYZ p1 = c.GetEndPoint(1);
+                        XYZ mid = c.Evaluate(0.5, true);
+                        
+                        double d0 = axisPoint.DistanceTo(p0);
+                        double d1 = axisPoint.DistanceTo(p1);
+                        double dMid = axisPoint.DistanceTo(mid);
+                        
+                        // Выбираем ближайшую точку
+                        if (d0 < minDistance && d0 < halfWidth * 3.0)
+                        {
+                            minDistance = d0;
+                            closestPoint = p0;
+                        }
+                        if (d1 < minDistance && d1 < halfWidth * 3.0)
+                        {
+                            minDistance = d1;
+                            closestPoint = p1;
+                        }
+                        if (dMid < minDistance && dMid < halfWidth * 3.0)
+                        {
+                            minDistance = dMid;
+                            closestPoint = mid;
+                        }
+                        
+                        // Также проверяем точки вдоль края с шагом
+                        for (int i = 0; i <= 10; i++)
+                        {
+                            double param = i / 10.0;
+                            XYZ pointOnEdge = c.Evaluate(param, true);
+                            double dist = axisPoint.DistanceTo(pointOnEdge);
+                            
+                            if (dist < minDistance && dist < halfWidth * 3.0)
+                            {
+                                minDistance = dist;
+                                closestPoint = pointOnEdge;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return closestPoint;
+    }
+    catch { }
+
+    return null;
 }
 
 /// <summary>
