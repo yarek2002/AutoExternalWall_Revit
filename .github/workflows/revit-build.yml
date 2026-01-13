@@ -96,7 +96,13 @@ jobs:
           
       # 6. Создаём ZIP
       - name: Create ZIP
-        run: Compress-Archive -Path "${{ env.OUTPUT_DIR }}/*" -DestinationPath "${{ env.OUTPUT_DIR }}.zip" -Force
+        run: |
+          $zipName = "${{ env.OUTPUT_DIR }}.zip"
+          # Убедимся, что имя не заканчивается на .zip.zip
+          if ($zipName -match '\.zip\.zip$') {
+              $zipName = $zipName -replace '\.zip\.zip$', '.zip'
+          }
+          Compress-Archive -Path "${{ env.OUTPUT_DIR }}/*" -DestinationPath $zipName -Force
 
       # 7. Загружаем артефакт (всегда видно в Actions)
       - name: Upload artifact
