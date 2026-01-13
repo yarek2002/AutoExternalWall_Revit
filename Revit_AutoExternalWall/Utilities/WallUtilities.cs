@@ -1573,15 +1573,13 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Определяем направление наружу для этого сегмента
                         XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
 
-                        // Строим ось внешней стены для сегмента
+                        // Строим ось внешней стены для сегмента строго по его границам (без растягивания)
                         XYZ segStart = segment.Curve.GetEndPoint(0);
                         XYZ segEnd = segment.Curve.GetEndPoint(1);
                         XYZ externalStart = segStart + outwardNormal * offsetDistance;
                         XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
 
                         Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
-                        externalCurve = ExtendToWallEnds(innerWall, externalCurve);
-                        externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
 
                         if (externalCurve == null || externalCurve.Length < 0.01)
                             continue;
