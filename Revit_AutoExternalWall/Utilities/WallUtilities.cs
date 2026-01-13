@@ -1456,6 +1456,7 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 
 /// <summary>
 /// Вычисляет длину продления с учетом угла между стенами
+/// Находит точку пересечения внешних граней стен геометрически
 /// </summary>
 private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
@@ -1490,54 +1491,66 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
             adjDir = -adjDir;
         }
 
-        // Вычисляем угол между стенами
-        double dotProduct = sourceDir.DotProduct(adjDir);
-        dotProduct = Math.Max(-1.0, Math.Min(1.0, dotProduct)); // Ограничиваем для acos
-        double angle = Math.Acos(dotProduct);
-
-        // Если угол близок к 0 или 180, возвращаем стандартное значение
-        const double minAngle = 0.01; // ~0.5 градуса
-        const double maxAngle = Math.PI - 0.01; // ~179.5 градусов
-        if (angle < minAngle || angle > maxAngle)
+        // Находим точку пересечения осей (угол)
+        XYZ cornerPoint = sourceEndPoint;
+        
+        // Вычисляем нормали к стенам (перпендикулярно к осям, направленные наружу)
+        // Для исходной стены: нормаль = поворот направления на 90° против часовой стрелки
+        XYZ sourceNormal = new XYZ(-sourceDir.Y, sourceDir.X, 0.0).Normalize();
+        
+        // Для примыкающей стены: нормаль = поворот направления на 90° против часовой стрелки
+        XYZ adjNormal = new XYZ(-adjDir.Y, adjDir.X, 0.0).Normalize();
+        
+        // Определяем, какая нормаль указывает наружу (от помещения)
+        // Нужно проверить, какая нормаль указывает в сторону от угла
+        // Если угол острый, нормали должны быть направлены в разные стороны от угла
+        // Если угол тупой, нормали должны быть направлены в одну сторону от угла
+        
+        // Получаем толщины стен
+        double sourceHalfWidth = GetWallThickness(sourceWall) / 2.0;
+        double adjHalfWidth = GetWallThickness(adjacentWall) / 2.0;
+        
+        // Строим линии внешних граней (смещенные от осей)
+        // Внешняя грань исходной стены проходит через точку: sourceEndPoint + sourceNormal * sourceHalfWidth
+        XYZ sourceExteriorPoint = sourceEndPoint + sourceNormal * sourceHalfWidth;
+        Line sourceExteriorLine = Line.CreateUnbound(sourceExteriorPoint, sourceDir);
+        
+        // Внешняя грань примыкающей стены проходит через точку: cornerPoint + adjNormal * adjHalfWidth
+        // Но сначала нужно найти точку на оси примыкающей стены, ближайшую к углу
+        XYZ adjCornerPoint = cornerPoint;
+        // Проецируем угол на ось примыкающей стены
+        double t = (cornerPoint - adjStart).DotProduct(adjDir);
+        if (t < 0) adjCornerPoint = adjStart;
+        else if (t > adjacentAxis.Length) adjCornerPoint = adjEnd;
+        else adjCornerPoint = adjStart + adjDir * t;
+        
+        XYZ adjExteriorPoint = adjCornerPoint + adjNormal * adjHalfWidth;
+        Line adjExteriorLine = Line.CreateUnbound(adjExteriorPoint, adjDir);
+        
+        // Находим точку пересечения внешних граней
+        IntersectionResultArray intersectionResults;
+        SetComparisonResult intersection = sourceExteriorLine.Intersect(adjExteriorLine, out intersectionResults);
+        
+        if (intersection == SetComparisonResult.Disjoint || intersectionResults == null || intersectionResults.Size == 0)
         {
-            return GetWallThickness(sourceWall) / 2.0;
+            // Если не нашли пересечение, используем стандартное значение
+            return sourceHalfWidth;
         }
-
-        // Вычисляем расстояние продления с учетом угла
-        // Для тупого угла (>90°) нужно продлевать дальше, для острого (<90°) - меньше
-        double halfWidth = GetWallThickness(sourceWall) / 2.0;
-        double halfWidthAdjacent = GetWallThickness(adjacentWall) / 2.0;
         
-        // Вычисляем угол между нормалями (внешними гранями)
-        // Угол между осями α, угол между нормалями = π - α
-        double normalAngle = Math.PI - angle;
+        XYZ intersectionPoint = intersectionResults.get_Item(0).XYZPoint;
         
-        // Если угол между нормалями близок к 0 или 180, используем стандартное значение
-        const double minNormalAngle = 0.01;
-        const double maxNormalAngle = Math.PI - 0.01;
-        if (normalAngle < minNormalAngle || normalAngle > maxNormalAngle)
+        // Вычисляем расстояние от конца оси исходной стены до точки пересечения
+        // Проецируем точку пересечения на ось исходной стены
+        double extension = (intersectionPoint - sourceEndPoint).DotProduct(sourceDir);
+        
+        // Если extension отрицательное, значит точка пересечения находится "позади" конца стены
+        // В этом случае используем стандартное значение
+        if (extension < 0)
         {
-            return halfWidth;
+            return sourceHalfWidth;
         }
         
-        // Используем формулу для вычисления расстояния до точки пересечения внешних граней
-        // Расстояние = halfWidth / tan(normalAngle/2)
-        double halfNormalAngle = normalAngle / 2.0;
-        double tanHalfNormalAngle = Math.Tan(halfNormalAngle);
-        
-        if (tanHalfNormalAngle < 0.001) // Избегаем деления на ноль
-        {
-            return halfWidth;
-        }
-
-        // Расстояние продления с учетом угла
-        // Для тупого угла между осями (α > 90°): normalAngle < 90°, tan меньше, extension больше ✓
-        // Для острого угла между осями (α < 90°): normalAngle > 90°, tan больше, extension меньше ✓
-        double extension = halfWidth / tanHalfNormalAngle;
-        
-        // Ограничиваем разумными пределами (не более 10 метров)
-        const double maxExtension = 10.0;
-        return Math.Min(extension, maxExtension);
+        return extension;
     }
     catch
     {
