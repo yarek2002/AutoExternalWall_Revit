@@ -1798,31 +1798,32 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                     // Вычисляем параметр точки пересечения на нашей кривой
                     double param = (intersectionPoint - start).DotProduct(dir);
                     
+                    // Обрезаем точно до точки пересечения
                     // Если точка пересечения находится в начале кривой, обрезаем начало
-                    if (param < minParam + 0.01)
+                    if (param <= minParam)
                     {
-                        minParam = Math.Max(minParam, param + 0.01);
+                        minParam = param;
                     }
                     // Если точка пересечения находится в конце кривой, обрезаем конец
-                    else if (param > maxParam - 0.01)
+                    else if (param >= maxParam)
                     {
-                        maxParam = Math.Min(maxParam, param - 0.01);
+                        maxParam = param;
                     }
                     // Если точка пересечения внутри кривой, обрезаем до неё
                     else
                     {
                         // Определяем, с какой стороны обрезать
                         // Обрезаем ту сторону, которая ближе к точке пересечения
-                        double distToStart = param;
+                        double distToStart = param - minParam;
                         double distToEnd = maxParam - param;
                         
                         if (distToStart < distToEnd)
                         {
-                            minParam = Math.Max(minParam, param + 0.01);
+                            minParam = param;
                         }
                         else
                         {
-                            maxParam = Math.Min(maxParam, param - 0.01);
+                            maxParam = param;
                         }
                     }
                 }
@@ -1846,14 +1847,14 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                     return null;
                 }
                 
-                // Обрезаем перекрывающиеся части
+                // Обрезаем перекрывающиеся части (точно до границ, без отступа)
                 if (paramExistingStart > minParam && paramExistingStart < maxParam)
                 {
-                    maxParam = Math.Min(maxParam, paramExistingStart - 0.01);
+                    maxParam = Math.Min(maxParam, paramExistingStart);
                 }
                 if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
                 {
-                    minParam = Math.Max(minParam, paramExistingEnd + 0.01);
+                    minParam = Math.Max(minParam, paramExistingEnd);
                 }
             }
         }
