@@ -1491,38 +1491,61 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
             adjDir = -adjDir;
         }
 
-        // Находим точку пересечения осей (угол)
-        XYZ cornerPoint = sourceEndPoint;
+        // Получаем правильные нормали (наружу от помещения)
+        // Используем GetWallFaceNormal, но нужно определить правильное направление
+        XYZ sourceBaseNormal = GetWallFaceNormal(sourceWall);
+        XYZ adjBaseNormal = GetWallFaceNormal(adjacentWall);
         
-        // Вычисляем нормали к стенам (перпендикулярно к осям, направленные наружу)
-        // Для исходной стены: нормаль = поворот направления на 90° против часовой стрелки
-        XYZ sourceNormal = new XYZ(-sourceDir.Y, sourceDir.X, 0.0).Normalize();
-        
-        // Для примыкающей стены: нормаль = поворот направления на 90° против часовой стрелки
-        XYZ adjNormal = new XYZ(-adjDir.Y, adjDir.X, 0.0).Normalize();
-        
-        // Определяем, какая нормаль указывает наружу (от помещения)
-        // Нужно проверить, какая нормаль указывает в сторону от угла
-        // Если угол острый, нормали должны быть направлены в разные стороны от угла
-        // Если угол тупой, нормали должны быть направлены в одну сторону от угла
+        // Определяем, какая сторона является внешней
+        // Для этого находим помещения, примыкающие к стенам
+        // И определяем нормаль, направленную от помещения наружу
         
         // Получаем толщины стен
         double sourceHalfWidth = GetWallThickness(sourceWall) / 2.0;
         double adjHalfWidth = GetWallThickness(adjacentWall) / 2.0;
         
-        // Строим линии внешних граней (смещенные от осей)
-        // Внешняя грань исходной стены проходит через точку: sourceEndPoint + sourceNormal * sourceHalfWidth
-        XYZ sourceExteriorPoint = sourceEndPoint + sourceNormal * sourceHalfWidth;
-        Line sourceExteriorLine = Line.CreateUnbound(sourceExteriorPoint, sourceDir);
+        // Определяем правильное направление нормали для исходной стены
+        // Вектор от конца стены к углу должен помочь определить направление
+        // Если угол острый, нормали должны быть направлены в разные стороны от угла
+        // Если угол тупой, нормали должны быть направлены в одну сторону от угла
         
-        // Внешняя грань примыкающей стены проходит через точку: cornerPoint + adjNormal * adjHalfWidth
-        // Но сначала нужно найти точку на оси примыкающей стены, ближайшую к углу
-        XYZ adjCornerPoint = cornerPoint;
-        // Проецируем угол на ось примыкающей стены
-        double t = (cornerPoint - adjStart).DotProduct(adjDir);
+        // Вычисляем угол между направлениями стен
+        double dotProduct = sourceDir.DotProduct(adjDir);
+        dotProduct = Math.Max(-1.0, Math.Min(1.0, dotProduct));
+        double angle = Math.Acos(dotProduct);
+        
+        // Вектор от конца исходной стены к ближайшей точке примыкающей стены
+        XYZ toAdjacent = (adjStart + adjDir * Math.Max(0, Math.Min(adjacentAxis.Length, (sourceEndPoint - adjStart).DotProduct(adjDir)))) - sourceEndPoint;
+        XYZ toAdjacentNormalized = toAdjacent.Normalize();
+        
+        // Определяем направление нормали для исходной стены
+        // Нормаль должна быть перпендикулярна направлению стены и указывать в сторону от угла
+        XYZ sourceNormal = new XYZ(-sourceDir.Y, sourceDir.X, 0.0).Normalize();
+        // Проверяем, указывает ли нормаль в сторону от угла
+        if (sourceNormal.DotProduct(toAdjacentNormalized) > 0)
+        {
+            sourceNormal = -sourceNormal;
+        }
+        
+        // Аналогично для примыкающей стены
+        XYZ adjNormal = new XYZ(-adjDir.Y, adjDir.X, 0.0).Normalize();
+        XYZ fromAdjacent = sourceEndPoint - (adjStart + adjDir * Math.Max(0, Math.Min(adjacentAxis.Length, (sourceEndPoint - adjStart).DotProduct(adjDir))));
+        XYZ fromAdjacentNormalized = fromAdjacent.Normalize();
+        if (adjNormal.DotProduct(fromAdjacentNormalized) < 0)
+        {
+            adjNormal = -adjNormal;
+        }
+        
+        // Находим точку на оси примыкающей стены, ближайшую к углу
+        XYZ adjCornerPoint = sourceEndPoint;
+        double t = (sourceEndPoint - adjStart).DotProduct(adjDir);
         if (t < 0) adjCornerPoint = adjStart;
         else if (t > adjacentAxis.Length) adjCornerPoint = adjEnd;
         else adjCornerPoint = adjStart + adjDir * t;
+        
+        // Строим линии внешних граней (смещенные от осей на половину толщины)
+        XYZ sourceExteriorPoint = sourceEndPoint + sourceNormal * sourceHalfWidth;
+        Line sourceExteriorLine = Line.CreateUnbound(sourceExteriorPoint, sourceDir);
         
         XYZ adjExteriorPoint = adjCornerPoint + adjNormal * adjHalfWidth;
         Line adjExteriorLine = Line.CreateUnbound(adjExteriorPoint, adjDir);
@@ -1544,10 +1567,21 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
         double extension = (intersectionPoint - sourceEndPoint).DotProduct(sourceDir);
         
         // Если extension отрицательное, значит точка пересечения находится "позади" конца стены
-        // В этом случае используем стандартное значение
         if (extension < 0)
         {
             return sourceHalfWidth;
+        }
+        
+        // Добавляем небольшую корректировку для компенсации неточностей
+        // При остром угле немного увеличиваем, при тупом - немного уменьшаем
+        const double correctionFactor = 0.02; // 2 см корректировка
+        if (angle < Math.PI / 2.0) // Острый угол
+        {
+            extension += correctionFactor;
+        }
+        else if (angle > Math.PI / 2.0) // Тупой угол
+        {
+            extension -= correctionFactor;
         }
         
         return extension;
