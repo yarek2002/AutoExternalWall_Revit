@@ -70,7 +70,7 @@ jobs:
         working-directory: Revit_AutoExternalWall
         run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU /p:ReferencePath=..\libs\Revit2021
 
-      # 5. Создаём ZIP НАПРЯМУЮ из нужных файлов
+       # 5. Создаём ZIP НАПРЯМУЮ из нужных файлов
       - name: Create ZIP directly
         run: |
           # Удаляем старый ZIP если есть
@@ -87,10 +87,6 @@ jobs:
           }
           
           New-Item -ItemType Directory -Path $tempDir -Force
-
-          Write-Host "BIN CONTENT:"
-          Get-ChildItem "Revit_AutoExternalWall" -Recurse -Filter "*.zip"
-
           
           # Копируем ТОЛЬКО нужные файлы из bin/Release
           $source = "Revit_AutoExternalWall/bin/${{ env.CONFIG }}"
@@ -140,24 +136,31 @@ jobs:
           # Создаем ZIP из временной папки
           Compress-Archive -Path "$tempDir/*" -DestinationPath "${{ env.ZIP_NAME }}.zip" -Force
           
-          # Очищаем временную папку
-          Remove-Item $tempDir -Recurse -Force
+          # НЕ удаляем временную папку сразу, чтобы можно было загрузить как артефакт
+          # Remove-Item $tempDir -Recurse -Force
           
           # Проверяем что в ZIP
           Write-Host "ZIP file created: ${{ env.ZIP_NAME }}.zip"
           Write-Host "File size: $((Get-Item '${{ env.ZIP_NAME }}.zip').Length / 1MB) MB"
-
-      # 6. Загружаем артефакт
-      - name: Upload artifact (as folder)
+      
+      # 6. Загружаем артефакт (папку, не ZIP)
+      - name: Upload artifact (folder)
         uses: actions/upload-artifact@v4
         with:
           name: Revit_AutoExternalWall-2021-${{ github.sha }}
-          path: temp_package/  # Загружаем папку, а не ZIP
-
-      # 7. Создаём GitHub Release
+          path: temp_package/  # Загружаем папку с файлами
+      
+      # 7. Очищаем временную папку после загрузки артефакта
+      - name: Clean up
+        run: |
+          if (Test-Path "temp_package") {
+            Remove-Item "temp_package" -Recurse -Force
+          }
+      
+      # 8. Создаём GitHub Release автоматически при пуше тега
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIP_NAME }}.zip
+          files: ${{ env.ZIP_NAME }}.zip  # В релиз кладем ZIP-файл
           generate_release_notes: true
