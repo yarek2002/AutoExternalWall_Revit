@@ -1497,7 +1497,7 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
                 IntersectionResultArray intersectionResults;
                 SetComparisonResult intersection = sourceEdge.Intersect(adjEdge, out intersectionResults);
 
-                if (intersection == SetComparisonResult.Intersect && 
+                if (intersection != SetComparisonResult.Disjoint && 
                     intersectionResults != null && intersectionResults.Size > 0)
                 {
                     XYZ point = intersectionResults.get_Item(0).XYZPoint;
