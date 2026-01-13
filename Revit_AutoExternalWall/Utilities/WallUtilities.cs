@@ -1567,6 +1567,13 @@ private static Curve ExtendCurveToJoinedWalls(
                     double externalThickness = GetWallTypeThickness(wallType);
                     double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
 
+                    // Получаем ось исходной стены для определения концов
+                    LocationCurve wallLocation = innerWall.Location as LocationCurve;
+                    Line axisLine = wallLocation.Curve as Line;
+                    XYZ axisStart = axisLine.GetEndPoint(0);
+                    XYZ axisDir = (axisLine.GetEndPoint(1) - axisStart).Normalize();
+                    double axisLength = axisLine.Length;
+
                     // Создаем внешнюю стену для каждого сегмента
                     for (int segIndex = 0; segIndex < wallSegments.Count; segIndex++)
                     {
@@ -1583,12 +1590,18 @@ private static Curve ExtendCurveToJoinedWalls(
 
                         Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
 
-                        // Для крайних сегментов (первого и последнего) растягиваем до углов
-                        // Для внутренних сегментов не растягиваем, чтобы избежать перекрытий
-                        bool isFirstSegment = (segIndex == 0);
-                        bool isLastSegment = (segIndex == wallSegments.Count - 1);
+                        // Проверяем, являются ли края сегмента концами исходной стены
+                        // Проецируем концы сегмента на ось исходной стены
+                        double tStart = (segStart - axisStart).DotProduct(axisDir);
+                        double tEnd = (segEnd - axisStart).DotProduct(axisDir);
                         
-                        if (isFirstSegment || isLastSegment)
+                        const double tolerance = 0.01;
+                        bool startIsWallEnd = Math.Abs(tStart) < tolerance;
+                        bool endIsWallEnd = Math.Abs(tEnd - axisLength) < tolerance;
+                        
+                        // Растягиваем только если ОБА края являются концами исходной стены
+                        // Если хотя бы один край - точка разделения, не растягиваем
+                        if (startIsWallEnd && endIsWallEnd)
                         {
                             externalCurve = ExtendToWallEnds(innerWall, externalCurve);
                             externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
