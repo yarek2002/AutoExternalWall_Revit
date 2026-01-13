@@ -1573,37 +1573,69 @@ private static Curve ExtendCurveToJoinedWalls(
                     XYZ axisDir = (axisLine.GetEndPoint(1) - axisStart).Normalize();
                     double axisLength = axisLine.Length;
 
+                    // Собираем точки разделения из сегментов
+                    HashSet<double> splitPoints = new HashSet<double>();
+                    foreach (var seg in wallSegments)
+                    {
+                        XYZ segStart = seg.Curve.GetEndPoint(0);
+                        XYZ segEnd = seg.Curve.GetEndPoint(1);
+                        
+                        double tStart = (segStart - axisStart).DotProduct(axisDir);
+                        double tEnd = (segEnd - axisStart).DotProduct(axisDir);
+                        
+                        // Добавляем внутренние точки (не концы стены)
+                        const double tolerance = 0.01;
+                        if (tStart > tolerance && tStart < axisLength - tolerance)
+                            splitPoints.Add(tStart);
+                        if (tEnd > tolerance && tEnd < axisLength - tolerance)
+                            splitPoints.Add(tEnd);
+                    }
+
                     // Создаем внешнюю стену для каждого сегмента
                     for (int segIndex = 0; segIndex < wallSegments.Count; segIndex++)
                     {
                         WallSegment segment = wallSegments[segIndex];
                         
-                        // Определяем направление наружу для этого сегмента
-                        XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
-
-                        // Строим ось внешней стены для сегмента
                         XYZ segStart = segment.Curve.GetEndPoint(0);
                         XYZ segEnd = segment.Curve.GetEndPoint(1);
-                        XYZ externalStart = segStart + outwardNormal * offsetDistance;
-                        XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
-
-                        Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
-
-                        // Проверяем, являются ли края сегмента концами исходной стены
-                        // Проецируем концы сегмента на ось исходной стены
+                        
                         double tStart = (segStart - axisStart).DotProduct(axisDir);
                         double tEnd = (segEnd - axisStart).DotProduct(axisDir);
                         
                         const double tolerance = 0.01;
+                        bool startIsSplitPoint = splitPoints.Contains(tStart) || Math.Abs(tStart) < tolerance;
+                        bool endIsSplitPoint = splitPoints.Contains(tEnd) || Math.Abs(tEnd - axisLength) < tolerance;
                         bool startIsWallEnd = Math.Abs(tStart) < tolerance;
                         bool endIsWallEnd = Math.Abs(tEnd - axisLength) < tolerance;
                         
-                        // Растягиваем только если ОБА края являются концами исходной стены
-                        // Если хотя бы один край - точка разделения, не растягиваем
-                        if (startIsWallEnd && endIsWallEnd)
+                        // Определяем направление наружу для этого сегмента
+                        XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
+                        XYZ externalStart = segStart + outwardNormal * offsetDistance;
+                        XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
+                        
+                        Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                        
+                        // Растягиваем только если край является концом исходной стены, а не точкой разделения
+                        if (startIsWallEnd || endIsWallEnd)
                         {
                             externalCurve = ExtendToWallEnds(innerWall, externalCurve);
                             externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
+                            
+                            // Если начало - точка разделения, обрезаем его обратно
+                            if (!startIsWallEnd && startIsSplitPoint)
+                            {
+                                // Обрезаем начало до исходной точки
+                                XYZ newStart = externalStart;
+                                externalCurve = Line.CreateBound(newStart, externalCurve.GetEndPoint(1));
+                            }
+                            
+                            // Если конец - точка разделения, обрезаем его обратно
+                            if (!endIsWallEnd && endIsSplitPoint)
+                            {
+                                // Обрезаем конец до исходной точки
+                                XYZ newEnd = externalEnd;
+                                externalCurve = Line.CreateBound(externalCurve.GetEndPoint(0), newEnd);
+                            }
                         }
 
                         if (externalCurve == null || externalCurve.Length < 0.01)
