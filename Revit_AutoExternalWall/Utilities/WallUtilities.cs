@@ -1816,20 +1816,37 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Если перегородка граничит с разными выбранными комнатами - это точка разделения
                         if (roomsUsingOtherWall.Count >= 2)
                         {
-                            // Берем середину внутренней стены (перегородки) в качестве точки разделения
-                            XYZ otherWallStart = otherLine.GetEndPoint(0);
-                            XYZ otherWallEnd = otherLine.GetEndPoint(1);
-                            XYZ middleOfOtherWall = (otherWallStart + otherWallEnd) * 0.5;
+                            // Берем первую точку пересечения осей
+                            IntersectionResult intersection = intersections.get_Item(0);
+                            XYZ axisIntersectionPoint = intersection.XYZPoint;
 
-                            // Проецируем середину перегородки на ось текущей стены
-                            double t = (middleOfOtherWall - axisStart).DotProduct(axisDir);
+                            // Учитываем толщину перегородки для определения точек пересечения внешних граней
+                            double partitionThickness = GetWallThickness(otherWall);
+                            double partitionHalfThickness = partitionThickness / 2.0;
+
+                            // Направление перегородки
+                            XYZ otherDir = (otherLine.GetEndPoint(1) - otherLine.GetEndPoint(0)).Normalize();
+                            // Нормаль к перегородке (перпендикулярно в плоскости XY)
+                            XYZ otherNormal = new XYZ(-otherDir.Y, otherDir.X, 0.0).Normalize();
+
+                            // Точки, где внешние грани перегородки пересекают ось внешней стены
+                            // Смещаем точку пересечения осей на половину толщины перегородки в обе стороны
+                            XYZ outerFace1 = axisIntersectionPoint + otherNormal * partitionHalfThickness;
+                            XYZ outerFace2 = axisIntersectionPoint - otherNormal * partitionHalfThickness;
+
+                            // Проецируем эти точки на ось внешней стены
+                            double t1 = (outerFace1 - axisStart).DotProduct(axisDir);
+                            double t2 = (outerFace2 - axisStart).DotProduct(axisDir);
+
+                            // Берем середину между этими точками как точку разделения
+                            double t = (t1 + t2) / 2.0;
 
                             // Добавляем только внутренние точки (не концы стены)
                             const double edgeTolerance = 0.01;
                             if (t > edgeTolerance && t < axisLength - edgeTolerance)
                             {
                                 intersectionPoints.Add(t);
-                                Log(wall.Document, $"Найдена точка разделения на стене {wall.Id} от перегородки {otherWall.Id} при t={t:F3} (используется середина перегородки)");
+                                Log(wall.Document, $"Найдена точка разделения на стене {wall.Id} от перегородки {otherWall.Id} при t={t:F3} (середина между гранями перегородки)");
                             }
                         }
                     }
