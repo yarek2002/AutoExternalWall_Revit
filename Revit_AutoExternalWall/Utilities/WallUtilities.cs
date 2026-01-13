@@ -1541,11 +1541,12 @@ private static Curve ExtendCurveToJoinedWalls(
 
                     // Получаем осевую линию стены
                     LocationCurve wallLocation = innerWall.Location as LocationCurve;
-                    if (wallLocation == null || wallLocation.Curve == null || !(wallLocation.Curve is Line axisLine))
+                    if (wallLocation == null || wallLocation.Curve == null || !(wallLocation.Curve is Line))
                     {
                         Log(doc, $"Стена {innerWall.Id} не имеет подходящей осевой линии");
                         continue;
                     }
+                    Line axisLine = wallLocation.Curve as Line;
 
                     // Проверяем, является ли стена внешней (хотя бы с одной стороны нет помещения)
                     if (!IsExternalWall(doc, innerWall, segmentDataList))
@@ -1567,9 +1568,7 @@ private static Curve ExtendCurveToJoinedWalls(
                     double externalThickness = GetWallTypeThickness(wallType);
                     double offsetDistance = (innerThickness / 2.0) + (externalThickness / 2.0);
 
-                    // Получаем ось исходной стены для определения концов
-                    LocationCurve wallLocation = innerWall.Location as LocationCurve;
-                    Line axisLine = wallLocation.Curve as Line;
+                    // Получаем параметры оси исходной стены для определения концов
                     XYZ axisStart = axisLine.GetEndPoint(0);
                     XYZ axisDir = (axisLine.GetEndPoint(1) - axisStart).Normalize();
                     double axisLength = axisLine.Length;
