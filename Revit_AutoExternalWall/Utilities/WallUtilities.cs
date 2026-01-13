@@ -132,7 +132,7 @@ namespace Revit_AutoExternalWall.Utilities
                     // Invert curve direction so inner face is on the side toward original wall
                     Curve reversedCurve = offsetCurve.CreateReversed();
 
-                    reversedCurve = ExtendToWallEnds(innerWall, reversedCurve, wallFaceNormal);
+                    reversedCurve = ExtendToWallEnds(innerWall, reversedCurve);
 
 
                     // Создаём внешнюю стену по всей длине исходной стены без дополнительной подрезки
@@ -1343,7 +1343,7 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
 
-private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve, XYZ outwardNormal = null)
+private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
 {
     if (!(curve is Line line))
         return curve;
@@ -1359,12 +1359,6 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve, XYZ outwardN
     XYZ dir = (axisEnd - axisStart).Normalize();
     double halfWidth = GetWallThickness(sourceWall) / 2.0;
 
-    // Если нормаль не передана, используем базовую нормаль стены
-    if (outwardNormal == null)
-    {
-        outwardNormal = GetWallFaceNormal(sourceWall);
-    }
-
     // Находим примыкающие стены в углах
     Wall adjacentWall0 = FindAdjacentWallAtEnd(sourceWall, 0);
     Wall adjacentWall1 = FindAdjacentWallAtEnd(sourceWall, 1);
@@ -1372,38 +1366,26 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve, XYZ outwardN
     XYZ p0 = line.GetEndPoint(0);
     XYZ p1 = line.GetEndPoint(1);
 
-    // Определяем направление продления для каждого конца
-    // Для начала: продлеваем в направлении, противоположном dir, но с учетом нормали
-    // Для конца: продлеваем в направлении dir, но с учетом нормали
-    XYZ extendDir0 = -dir; // Направление от начала стены
-    XYZ extendDir1 = dir;  // Направление от конца стены
-
     // Продлеваем начало с учетом угла
     if (adjacentWall0 != null)
     {
-        double extension0 = CalculateExtensionLength(sourceWall, adjacentWall0, 0, outwardNormal);
-        // Проецируем extension0 на направление продления
-        // Расстояние вдоль нормали наружу
-        p0 = p0 + outwardNormal * extension0;
+        double extension0 = CalculateExtensionLength(sourceWall, adjacentWall0, 0);
+        p0 = p0 - dir * extension0;
     }
     else
     {
-        // Стандартное продление: смещаем вдоль нормали на половину толщины
-        p0 = p0 + outwardNormal * halfWidth;
+        p0 = p0 - dir * halfWidth;
     }
 
     // Продлеваем конец с учетом угла
     if (adjacentWall1 != null)
     {
-        double extension1 = CalculateExtensionLength(sourceWall, adjacentWall1, 1, outwardNormal);
-        // Проецируем extension1 на направление продления
-        // Расстояние вдоль нормали наружу
-        p1 = p1 + outwardNormal * extension1;
+        double extension1 = CalculateExtensionLength(sourceWall, adjacentWall1, 1);
+        p1 = p1 + dir * extension1;
     }
     else
     {
-        // Стандартное продление: смещаем вдоль нормали на половину толщины
-        p1 = p1 + outwardNormal * halfWidth;
+        p1 = p1 + dir * halfWidth;
     }
 
     return Line.CreateBound(p0, p1);
@@ -1476,7 +1458,7 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 /// Вычисляет длину продления с учетом угла между стенами
 /// Находит точку пересечения линии продления с внешней гранью примыкающей стены
 /// </summary>
-private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex, XYZ outwardNormal)
+private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
     if (sourceWall == null || adjacentWall == null)
     {
@@ -1498,8 +1480,9 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
         if (endIndex == 0) sourceDir = -sourceDir;
 
-        // Используем переданную нормаль наружу (правильное направление от помещения)
-        XYZ sourceNormal = outwardNormal ?? GetWallFaceNormal(sourceWall);
+        // Определяем направление нормали к исходной стене (наружу)
+        // Нужно получить правильное направление наружу от помещения
+        XYZ sourceNormal = GetWallFaceNormal(sourceWall);
         
         // Получаем внешнюю грань примыкающей стены
         var sideRefs = HostObjectUtils.GetSideFaces(adjacentWall, ShellLayerType.Exterior);
@@ -1982,7 +1965,7 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Растягиваем только если край является концом исходной стены, а не точкой разделения
                         if (startIsWallEnd || endIsWallEnd)
                         {
-                            externalCurve = ExtendToWallEnds(innerWall, externalCurve, outwardNormal);
+                            externalCurve = ExtendToWallEnds(innerWall, externalCurve);
                             externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
                             
                             // Если начало - точка разделения, обрезаем его обратно
@@ -2495,7 +2478,7 @@ private static Curve ExtendCurveToJoinedWalls(
 
                     Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
                     // Дотягиваем до торцов исходной стены (учёт её толщины и примыканий)
-                    externalCurve = ExtendToWallEnds(innerWall, externalCurve, outwardNormal);
+                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
                     externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
 
                     if (externalCurve == null || externalCurve.Length < 0.01)
