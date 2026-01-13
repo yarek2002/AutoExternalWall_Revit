@@ -1354,14 +1354,195 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
     if (!(lc.Curve is Line axis))
         return curve;
 
-    XYZ dir = (axis.GetEndPoint(1) - axis.GetEndPoint(0)).Normalize();
-
+    XYZ axisStart = axis.GetEndPoint(0);
+    XYZ axisEnd = axis.GetEndPoint(1);
+    XYZ dir = (axisEnd - axisStart).Normalize();
     double halfWidth = GetWallThickness(sourceWall) / 2.0;
 
-    XYZ p0 = line.GetEndPoint(0) - dir * halfWidth;
-    XYZ p1 = line.GetEndPoint(1) + dir * halfWidth;
+    // Находим примыкающие стены в углах
+    Wall adjacentWall0 = FindAdjacentWallAtEnd(sourceWall, 0);
+    Wall adjacentWall1 = FindAdjacentWallAtEnd(sourceWall, 1);
+
+    XYZ p0 = line.GetEndPoint(0);
+    XYZ p1 = line.GetEndPoint(1);
+
+    // Продлеваем начало с учетом угла
+    if (adjacentWall0 != null)
+    {
+        double extension0 = CalculateExtensionLength(sourceWall, adjacentWall0, 0);
+        p0 = p0 - dir * extension0;
+    }
+    else
+    {
+        p0 = p0 - dir * halfWidth;
+    }
+
+    // Продлеваем конец с учетом угла
+    if (adjacentWall1 != null)
+    {
+        double extension1 = CalculateExtensionLength(sourceWall, adjacentWall1, 1);
+        p1 = p1 + dir * extension1;
+    }
+    else
+    {
+        p1 = p1 + dir * halfWidth;
+    }
 
     return Line.CreateBound(p0, p1);
+}
+
+/// <summary>
+/// Находит примыкающую стену в указанном конце исходной стены
+/// </summary>
+private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
+{
+    if (sourceWall == null || sourceWall.Document == null)
+        return null;
+
+    try
+    {
+        LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
+        if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
+            return null;
+
+        XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
+        XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
+        if (endIndex == 0) sourceDir = -sourceDir; // Для начала берем обратное направление
+
+        // Ищем примыкающие стены через JoinGeometryUtils
+        var joined = JoinGeometryUtils.GetJoinedElements(sourceWall.Document, sourceWall);
+        if (joined == null)
+            return null;
+
+        double minDistance = double.MaxValue;
+        Wall closestWall = null;
+
+        foreach (ElementId id in joined)
+        {
+            if (!(sourceWall.Document.GetElement(id) is Wall other))
+                continue;
+
+            if (!JoinGeometryUtils.AreElementsJoined(sourceWall.Document, sourceWall, other))
+                continue;
+
+            LocationCurve otherLocation = other.Location as LocationCurve;
+            if (otherLocation == null || !(otherLocation.Curve is Line otherAxis))
+                continue;
+
+            // Проверяем, находится ли конец другой стены близко к концу исходной
+            XYZ otherStart = otherAxis.GetEndPoint(0);
+            XYZ otherEnd = otherAxis.GetEndPoint(1);
+            
+            double distToStart = sourceEndPoint.DistanceTo(otherStart);
+            double distToEnd = sourceEndPoint.DistanceTo(otherEnd);
+
+            double minDist = Math.Min(distToStart, distToEnd);
+            const double tolerance = 0.1; // 10 см
+
+            if (minDist < tolerance && minDist < minDistance)
+            {
+                minDistance = minDist;
+                closestWall = other;
+            }
+        }
+
+        return closestWall;
+    }
+    catch
+    {
+        return null;
+    }
+}
+
+/// <summary>
+/// Вычисляет длину продления с учетом угла между стенами
+/// </summary>
+private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
+{
+    if (sourceWall == null || adjacentWall == null)
+    {
+        return GetWallThickness(sourceWall) / 2.0;
+    }
+
+    try
+    {
+        LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
+        LocationCurve adjacentLocation = adjacentWall.Location as LocationCurve;
+        
+        if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
+            return GetWallThickness(sourceWall) / 2.0;
+        
+        if (adjacentLocation == null || !(adjacentLocation.Curve is Line adjacentAxis))
+            return GetWallThickness(sourceWall) / 2.0;
+
+        XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
+        XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
+        if (endIndex == 0) sourceDir = -sourceDir;
+
+        // Определяем направление примыкающей стены (к концу исходной)
+        XYZ adjStart = adjacentAxis.GetEndPoint(0);
+        XYZ adjEnd = adjacentAxis.GetEndPoint(1);
+        XYZ adjDir = (adjEnd - adjStart).Normalize();
+        
+        // Выбираем направление, которое указывает к концу исходной стены
+        if (sourceEndPoint.DistanceTo(adjStart) > sourceEndPoint.DistanceTo(adjEnd))
+        {
+            adjDir = -adjDir;
+        }
+
+        // Вычисляем угол между стенами
+        double dotProduct = sourceDir.DotProduct(adjDir);
+        dotProduct = Math.Max(-1.0, Math.Min(1.0, dotProduct)); // Ограничиваем для acos
+        double angle = Math.Acos(dotProduct);
+
+        // Если угол близок к 0 или 180, возвращаем стандартное значение
+        const double minAngle = 0.01; // ~0.5 градуса
+        const double maxAngle = Math.PI - 0.01; // ~179.5 градусов
+        if (angle < minAngle || angle > maxAngle)
+        {
+            return GetWallThickness(sourceWall) / 2.0;
+        }
+
+        // Вычисляем расстояние продления с учетом угла
+        // Для тупого угла (>90°) нужно продлевать дальше, для острого (<90°) - меньше
+        double halfWidth = GetWallThickness(sourceWall) / 2.0;
+        double halfWidthAdjacent = GetWallThickness(adjacentWall) / 2.0;
+        
+        // Вычисляем угол между нормалями (внешними гранями)
+        // Угол между осями α, угол между нормалями = π - α
+        double normalAngle = Math.PI - angle;
+        
+        // Если угол между нормалями близок к 0 или 180, используем стандартное значение
+        const double minNormalAngle = 0.01;
+        const double maxNormalAngle = Math.PI - 0.01;
+        if (normalAngle < minNormalAngle || normalAngle > maxNormalAngle)
+        {
+            return halfWidth;
+        }
+        
+        // Используем формулу для вычисления расстояния до точки пересечения внешних граней
+        // Расстояние = halfWidth / tan(normalAngle/2)
+        double halfNormalAngle = normalAngle / 2.0;
+        double tanHalfNormalAngle = Math.Tan(halfNormalAngle);
+        
+        if (tanHalfNormalAngle < 0.001) // Избегаем деления на ноль
+        {
+            return halfWidth;
+        }
+
+        // Расстояние продления с учетом угла
+        // Для тупого угла между осями (α > 90°): normalAngle < 90°, tan меньше, extension больше ✓
+        // Для острого угла между осями (α < 90°): normalAngle > 90°, tan больше, extension меньше ✓
+        double extension = halfWidth / tanHalfNormalAngle;
+        
+        // Ограничиваем разумными пределами (не более 10 метров)
+        const double maxExtension = 10.0;
+        return Math.Min(extension, maxExtension);
+    }
+    catch
+    {
+        return GetWallThickness(sourceWall) / 2.0;
+    }
 }
 
         private static double GetJoinExtensionLength(
