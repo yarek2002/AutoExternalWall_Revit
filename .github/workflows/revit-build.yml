@@ -15,13 +15,12 @@ jobs:
       BUILD_PATH: Revit_AutoExternalWall/Revit_AutoExternalWall/Revit_AutoExternalWall.csproj 
       CONFIG: Release
       OUTPUT_DIR: Release-2021
-      ZIP_NAME: Revit_AutoExternalWall-2021  # Добавили отдельное имя для ZIP
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. Скачиваем и кэшируем RevitAPI.dll + RevitAPIUI.dll из твоего релиза
+      # 1. Скачиваем и кэшируем RevitAPI.dll + RevitAPIUI.dll
       - name: Cache Revit 2021 API DLLs
         id: cache-revit-api
         uses: actions/cache@v4
@@ -66,29 +65,36 @@ jobs:
       - name: NuGet restore
         run: nuget restore "${{ steps.find.outputs.csproj_path }}"
 
-      - name: Show directory structure
-        run: tree . /f
-
-      - name: Debug path
+      - name: Clean previous build
         run: |
-          Get-ChildItem -Recurse -Filter RevitAPI.dll | Select-Object FullName
+          # Очищаем папку bin/Release от предыдущих сборок
+          if (Test-Path "Revit_AutoExternalWall/bin/Release") {
+            Remove-Item "Revit_AutoExternalWall/bin/Release/*" -Recurse -Force -Exclude *.pdb,*.xml  # Оставляем только PDB и XML файлы если нужно
+          }
 
       - name: Build
         working-directory: Revit_AutoExternalWall
-        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU /p:ReferencePath=..\libs\Revit2021
+        run: msbuild Revit_AutoExternalWall.csproj /p:Configuration=Release /p:Platform=AnyCPU /p:ReferencePath=..\libs\Revit2021 /t:Clean,Rebuild
 
       # 5. Собираем готовый пакет для пользователей
       - name: Prepare release package
         run: |
-          # Удаляем старую папку если существует
+          # Удаляем старую папку вывода
           if (Test-Path "${{ env.OUTPUT_DIR }}") {
             Remove-Item "${{ env.OUTPUT_DIR }}" -Recurse -Force
           }
           New-Item -ItemType Directory -Path "${{ env.OUTPUT_DIR }}" -Force
 
-          Copy-Item "Revit_AutoExternalWall/bin/${{ env.CONFIG }}/*" -Destination "${{ env.OUTPUT_DIR }}/" -Recurse
+          # Копируем только нужные файлы, исключая ZIP и другие временные файлы
+          $sourceDir = "Revit_AutoExternalWall/bin/${{ env.CONFIG }}"
+          Get-ChildItem $sourceDir -File | Where-Object {
+            $_.Extension -notin @('.zip', '.tmp', '.cache', '.log') -and
+            $_.Name -notmatch '\.zip\.'
+          } | ForEach-Object {
+            Copy-Item $_.FullName -Destination "${{ env.OUTPUT_DIR }}/"
+          }
 
-          # Копируем .addin файл(ы) — ищем в корне и в папке проекта
+          # Копируем .addin файл(ы)
           Copy-Item "*.addin" -Destination "${{ env.OUTPUT_DIR }}/" -ErrorAction SilentlyContinue
           Copy-Item "Revit_AutoExternalWall/*.addin" -Destination "${{ env.OUTPUT_DIR }}/" -ErrorAction SilentlyContinue
 
@@ -97,35 +103,39 @@ jobs:
             Copy-Item "Revit_AutoExternalWall/Resources" -Destination "${{ env.OUTPUT_DIR }}/Resources" -Recurse -Force
           }
 
+          # Показываем что скопировалось
+          Write-Host "Contents of ${{ env.OUTPUT_DIR }}:"
+          Get-ChildItem "${{ env.OUTPUT_DIR }}" -Recurse | Format-Table Name, Length
+
       # 6. Создаём ZIP
       - name: Create ZIP
         run: |
-          # Создаем ZIP с правильным именем
-          $zipPath = "${{ env.ZIP_NAME }}.zip"
-          
+          $zipPath = "${{ env.OUTPUT_DIR }}.zip"
           # Удаляем старый ZIP если существует
           if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
           }
-          
           # Создаем архив
           Compress-Archive -Path "${{ env.OUTPUT_DIR }}\*" -DestinationPath $zipPath -Force
           
-          # Показываем что получилось
-          Write-Host "Created ZIP: $zipPath"
-          Get-Item $zipPath
+          # Проверяем содержимое архива
+          Write-Host "Checking ZIP contents:"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          $zip.Entries | Select-Object -First 20 Name, Length | Format-Table
+          $zip.Dispose()
 
       # 7. Загружаем артефакт
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_NAME }}-${{ github.sha }}
-          path: ${{ env.ZIP_NAME }}.zip  # Используем правильное имя файла
+          name: Revit_AutoExternalWall-2021-${{ github.sha }}
+          path: ${{ env.OUTPUT_DIR }}.zip
 
       # 8. Создаём GitHub Release автоматически при пуше тега
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIP_NAME }}.zip  # Используем правильное имя файла
+          files: ${{ env.OUTPUT_DIR }}.zip
           generate_release_notes: true
