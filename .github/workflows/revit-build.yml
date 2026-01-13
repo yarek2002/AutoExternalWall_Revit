@@ -87,6 +87,10 @@ jobs:
           }
           
           New-Item -ItemType Directory -Path $tempDir -Force
+
+          Write-Host "BIN CONTENT:"
+          Get-ChildItem "Revit_AutoExternalWall" -Recurse -Filter "*.zip"
+
           
           # Копируем ТОЛЬКО нужные файлы из bin/Release
           $source = "Revit_AutoExternalWall/bin/${{ env.CONFIG }}"
