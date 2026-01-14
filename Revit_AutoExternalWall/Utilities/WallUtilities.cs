@@ -582,51 +582,8 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Определяет правильное направление наружу для создания внешней стены.
-        /// Сравнивает оба направления и выбирает то, которое дальше от boundary curve комнаты.
-        /// Это более надежный способ для П-образных комнат и комнат со сложной геометрией.
-        /// </summary>
-        private static XYZ GetCorrectOutwardNormal(Wall existingWall, Curve boundaryCurve, Room room, double offsetDistance)
-        {
-            if (existingWall == null || boundaryCurve == null || room == null)
-                return GetWallFaceNormal(existingWall);
-
-            try
-            {
-                LocationCurve existingLocation = existingWall.Location as LocationCurve;
-                if (existingLocation == null || !(existingLocation.Curve is Line existingLine))
-                    return GetWallFaceNormal(existingWall);
-
-                // Получаем начальное направление
-                XYZ initialNormal = GetOutwardNormalFromRoom(existingWall, boundaryCurve, room);
-                
-                // Берем середину оси существующей стены
-                XYZ axisMid = existingLine.Evaluate(0.5, true);
-                XYZ boundaryMid = boundaryCurve.Evaluate(0.5, true);
-                
-                // Пробуем оба направления
-                XYZ normal1 = initialNormal;
-                XYZ normal2 = -initialNormal;
-                
-                XYZ point1 = axisMid + normal1 * offsetDistance;
-                XYZ point2 = axisMid + normal2 * offsetDistance;
-                
-                // Вычисляем расстояния от boundary curve до обеих точек
-                double dist1 = boundaryMid.DistanceTo(point1);
-                double dist2 = boundaryMid.DistanceTo(point2);
-                
-                // Выбираем направление, которое дальше от boundary curve (наружу)
-                return dist1 > dist2 ? normal1 : normal2;
-            }
-            catch
-            {
-                return GetWallFaceNormal(existingWall);
-            }
-        }
-
-        /// <summary>
-        /// Проверяет, находится ли создаваемая стена с той же стороны от существующей стены, что и boundary curve комнаты.
-        /// Если да, значит создаваемая стена находится внутри комнаты и нужно инвертировать направление.
+        /// Проверяет, пересекает ли создаваемая стена границы помещения.
+        /// Если пересекает - значит стена находится внутри комнаты и нужно инвертировать направление.
         /// </summary>
         private static bool DoesWallIntersectRoom(Curve externalCurve, Wall existingWall, Room room, Curve boundaryCurve = null)
         {
@@ -635,75 +592,43 @@ namespace Revit_AutoExternalWall.Utilities
 
             try
             {
-                LocationCurve existingLocation = existingWall.Location as LocationCurve;
-                if (existingLocation == null || !(existingLocation.Curve is Line existingLine))
+                // Получаем все границы помещения
+                SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
+                IList<IList<BoundarySegment>> boundaryLoops = room.GetBoundarySegments(opt);
+                
+                if (boundaryLoops == null || boundaryLoops.Count == 0)
                     return false;
 
-                // Получаем нормаль существующей стены
-                XYZ wallNormal = GetWallFaceNormal(existingWall);
-                
-                // Берем середину оси существующей стены
-                XYZ axisMid = existingLine.Evaluate(0.5, true);
-
-                // Определяем точку на boundary curve комнаты (внутренняя сторона)
-                XYZ roomBoundaryPoint = null;
-                
-                if (boundaryCurve != null)
+                // Проверяем пересечение создаваемой стены со всеми границами помещения
+                // Исключаем boundary segment самой существующей стены
+                foreach (IList<BoundarySegment> loop in boundaryLoops)
                 {
-                    roomBoundaryPoint = boundaryCurve.Evaluate(0.5, true);
-                }
-                else
-                {
-                    // Если boundary curve не передана, получаем её из комнаты
-                    SpatialElementBoundaryOptions opt = new SpatialElementBoundaryOptions();
-                    var boundaries = room.GetBoundarySegments(opt);
-                    if (boundaries == null || boundaries.Count == 0)
-                        return false;
-                    
-                    // Ищем boundary segment для этой стены
-                    foreach (var loop in boundaries)
+                    foreach (BoundarySegment segment in loop)
                     {
-                        foreach (var seg in loop)
+                        // Пропускаем boundary segment существующей стены
+                        if (segment.ElementId == existingWall.Id)
+                            continue;
+
+                        Curve boundarySegCurve = segment.GetCurve();
+                        if (boundarySegCurve == null)
+                            continue;
+
+                        // Проверяем пересечение создаваемой стены с boundary segment
+                        IntersectionResultArray intersectionResults;
+                        SetComparisonResult intersection = externalCurve.Intersect(boundarySegCurve, out intersectionResults);
+
+                        if (intersection != SetComparisonResult.Disjoint && 
+                            intersectionResults != null && 
+                            intersectionResults.Size > 0)
                         {
-                            if (seg.ElementId == existingWall.Id)
-                            {
-                                Curve segCurve = seg.GetCurve();
-                                if (segCurve != null)
-                                {
-                                    roomBoundaryPoint = segCurve.Evaluate(0.5, true);
-                                    break;
-                                }
-                            }
+                            // Если есть пересечение с границей комнаты (кроме самой существующей стены),
+                            // значит создаваемая стена пересекает комнату
+                            return true;
                         }
-                        if (roomBoundaryPoint != null)
-                            break;
                     }
                 }
-                
-                // Если не удалось найти boundary point, возвращаем false
-                if (roomBoundaryPoint == null)
-                    return false;
 
-                // Определяем точку на создаваемой стене (середина)
-                XYZ externalPoint = externalCurve.Evaluate(0.5, true);
-
-                // Векторы от оси существующей стены к boundary curve и к создаваемой стене
-                XYZ fromAxisToRoom = (roomBoundaryPoint - axisMid);
-                XYZ fromAxisToExternal = (externalPoint - axisMid);
-
-                // Определяем, с какой стороны от оси находятся boundary curve и создаваемая стена
-                // Используем скалярное произведение с нормалью стены
-                double roomSide = wallNormal.DotProduct(fromAxisToRoom);
-                double externalSide = wallNormal.DotProduct(fromAxisToExternal);
-
-                // Если boundary curve и создаваемая стена находятся с одной стороны от оси стены,
-                // значит создаваемая стена находится внутри комнаты
-                // Используем более строгий допуск для П-образных комнат
-                const double tolerance = 0.01; // Уменьшен допуск для более точной проверки
-                bool sameSide = (roomSide > tolerance && externalSide > tolerance) || 
-                               (roomSide < -tolerance && externalSide < -tolerance);
-
-                return sameSide;
+                return false;
             }
             catch
             {
@@ -1706,7 +1631,7 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
     }
 }
 
-/// <summary>
+            /// <summary>
 /// Вычисляет длину продления геометрически для случаев, когда пересечение не найдено
 /// Использует угол между стенами и толщину стен
 /// </summary>
@@ -2501,13 +2426,41 @@ private static Curve ExtendCurveToJoinedWalls(
                         bool startIsWallEnd = Math.Abs(tStart) < tolerance;
                         bool endIsWallEnd = Math.Abs(tEnd - axisLength) < tolerance;
                         
-                        // Определяем правильное направление наружу для этого сегмента
-                        // Используем функцию, которая сравнивает оба направления и выбирает правильное
-                        XYZ outwardNormal = GetCorrectOutwardNormal(innerWall, segment.Curve, segment.Room, offsetDistance);
+                        // Определяем направление наружу для этого сегмента
+                        XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, segment.Curve, segment.Room);
                         XYZ externalStart = segStart + outwardNormal * offsetDistance;
                         XYZ externalEnd = segEnd + outwardNormal * offsetDistance;
                         
                         Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                        
+                        // Проверяем, не пересекает ли создаваемая стена комнату
+                        // Если пересекает, пробуем противоположное направление
+                        // Передаем boundary curve сегмента для более точной проверки
+                        if (DoesWallIntersectRoom(externalCurve, innerWall, segment.Room, segment.Curve))
+                        {
+                            // Пробуем противоположное направление
+                            XYZ oppositeNormal = -outwardNormal;
+                            XYZ oppositeStart = segStart + oppositeNormal * offsetDistance;
+                            XYZ oppositeEnd = segEnd + oppositeNormal * offsetDistance;
+                            Curve oppositeCurve = Line.CreateBound(oppositeStart, oppositeEnd);
+                            
+                            // Если противоположное направление не пересекает комнату, используем его
+                            if (!DoesWallIntersectRoom(oppositeCurve, innerWall, segment.Room, segment.Curve))
+                            {
+                                outwardNormal = oppositeNormal;
+                                externalStart = oppositeStart;
+                                externalEnd = oppositeEnd;
+                                externalCurve = oppositeCurve;
+                            }
+                            // Иначе оставляем исходное направление (может быть случай, когда оба пересекают)
+                            else
+                            {
+                                outwardNormal = -outwardNormal;
+                                externalStart = segStart + outwardNormal * offsetDistance;
+                                externalEnd = segEnd + outwardNormal * offsetDistance;
+                                externalCurve = Line.CreateBound(externalStart, externalEnd);
+                            }
+                        }
                         
                         // Растягиваем только если край является концом исходной стены, а не точкой разделения
                         if (startIsWallEnd || endIsWallEnd)
@@ -3025,17 +2978,7 @@ private static Curve ExtendCurveToJoinedWalls(
                     Curve boundaryCurve = null;
                     wallBoundaryCurves.TryGetValue(innerWall.Id, out boundaryCurve);
 
-                    // Используем функцию, которая сравнивает оба направления и выбирает правильное
-                    // Если boundary curve не найдена, используем ось стены как fallback
-                    XYZ outwardNormal;
-                    if (boundaryCurve != null)
-                    {
-                        outwardNormal = GetCorrectOutwardNormal(innerWall, boundaryCurve, room, offsetDistance);
-                    }
-                    else
-                    {
-                        outwardNormal = GetOutwardNormalFromRoom(innerWall, axisLine, room);
-                    }
+                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve ?? axisLine, room);
 
                     // Строим ось внешней стены: ось внутренней + смещение по нормали
                     XYZ axisStart = axisLine.GetEndPoint(0);
@@ -3044,6 +2987,35 @@ private static Curve ExtendCurveToJoinedWalls(
                     XYZ externalEnd   = axisEnd   + outwardNormal * offsetDistance;
 
                     Curve externalCurve = Line.CreateBound(externalStart, externalEnd);
+                    
+                    // Проверяем, не пересекает ли создаваемая стена комнату
+                    // Если пересекает, пробуем противоположное направление
+                    // Передаем boundary curve для более точной проверки
+                    if (DoesWallIntersectRoom(externalCurve, innerWall, room, boundaryCurve))
+                    {
+                        // Пробуем противоположное направление
+                        XYZ oppositeNormal = -outwardNormal;
+                        XYZ oppositeStart = axisStart + oppositeNormal * offsetDistance;
+                        XYZ oppositeEnd = axisEnd + oppositeNormal * offsetDistance;
+                        Curve oppositeCurve = Line.CreateBound(oppositeStart, oppositeEnd);
+                        
+                        // Если противоположное направление не пересекает комнату, используем его
+                        if (!DoesWallIntersectRoom(oppositeCurve, innerWall, room, boundaryCurve))
+                        {
+                            outwardNormal = oppositeNormal;
+                            externalStart = oppositeStart;
+                            externalEnd = oppositeEnd;
+                            externalCurve = oppositeCurve;
+                        }
+                        // Иначе оставляем исходное направление (может быть случай, когда оба пересекают)
+                        else
+                        {
+                            outwardNormal = -outwardNormal;
+                            externalStart = axisStart + outwardNormal * offsetDistance;
+                            externalEnd = axisEnd + outwardNormal * offsetDistance;
+                            externalCurve = Line.CreateBound(externalStart, externalEnd);
+                        }
+                    }
                     
                     // Дотягиваем до торцов исходной стены (учёт её толщины и примыканий)
                     externalCurve = ExtendToWallEnds(innerWall, externalCurve);
