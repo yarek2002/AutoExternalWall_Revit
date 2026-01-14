@@ -1389,11 +1389,11 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
     }
 
     return Line.CreateBound(p0, p1);
-}
+        }
 
-/// <summary>
+        /// <summary>
 /// Находит примыкающую стену в указанном конце исходной стены
-/// </summary>
+        /// </summary>
 private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 {
     if (sourceWall == null || sourceWall.Document == null)
@@ -1542,7 +1542,9 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
         if (intersectionPoint == null)
         {
             // Если не нашли пересечение, используем стандартное значение
-            return GetWallThickness(sourceWall) / 2.0;
+            // Но для острых углов это может быть недостаточно
+            // Попробуем вычислить продление геометрически
+            return CalculateExtensionLengthGeometric(sourceWall, adjacentWall, endIndex);
         }
 
         // Вычисляем расстояние от конца оси исходной стены до точки пересечения
@@ -1554,10 +1556,92 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
         if (toIntersection.DotProduct(sourceNormal) < 0)
         {
             // Точка находится в неправильном направлении
-            return GetWallThickness(sourceWall) / 2.0;
+            // Попробуем вычислить продление геометрически
+            return CalculateExtensionLengthGeometric(sourceWall, adjacentWall, endIndex);
+        }
+
+        // Проверяем разумность значения продления
+        double maxReasonableExtension = GetWallThickness(sourceWall) + GetWallThickness(adjacentWall);
+        if (extension > maxReasonableExtension)
+        {
+            // Слишком большое продление - используем геометрический расчет
+            return CalculateExtensionLengthGeometric(sourceWall, adjacentWall, endIndex);
         }
 
         return extension;
+    }
+    catch
+    {
+        return GetWallThickness(sourceWall) / 2.0;
+    }
+}
+
+/// <summary>
+/// Вычисляет длину продления геометрически для случаев, когда пересечение не найдено
+/// Использует угол между стенами и толщину стен
+/// </summary>
+private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall adjacentWall, int endIndex)
+{
+    if (sourceWall == null || adjacentWall == null)
+    {
+        return GetWallThickness(sourceWall) / 2.0;
+    }
+
+    try
+    {
+        LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
+        LocationCurve adjacentLocation = adjacentWall.Location as LocationCurve;
+        
+        if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
+            return GetWallThickness(sourceWall) / 2.0;
+        
+        if (adjacentLocation == null || !(adjacentLocation.Curve is Line adjacentAxis))
+            return GetWallThickness(sourceWall) / 2.0;
+
+        XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
+        XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
+        if (endIndex == 0) sourceDir = -sourceDir;
+
+        XYZ adjacentStart = adjacentAxis.GetEndPoint(0);
+        XYZ adjacentEnd = adjacentAxis.GetEndPoint(1);
+        XYZ adjacentDir = (adjacentEnd - adjacentStart).Normalize();
+        
+        // Определяем, какой конец примыкающей стены ближе
+        double distToStart = sourceEndPoint.DistanceTo(adjacentStart);
+        double distToEnd = sourceEndPoint.DistanceTo(adjacentEnd);
+        if (distToStart > distToEnd) adjacentDir = -adjacentDir;
+
+        // Вычисляем угол между стенами
+        double dotProduct = Math.Abs(sourceDir.DotProduct(adjacentDir));
+        double angle = Math.Acos(Math.Min(1.0, Math.Max(-1.0, dotProduct)));
+        
+        // Если угол очень мал (стены почти параллельны) или очень большой (почти противоположны)
+        if (angle < 0.1 || angle > Math.PI - 0.1)
+        {
+            return GetWallThickness(sourceWall) / 2.0;
+        }
+
+        // Вычисляем продление с учетом угла и толщины стен
+        double sourceHalfThickness = GetWallThickness(sourceWall) / 2.0;
+        double adjacentHalfThickness = GetWallThickness(adjacentWall) / 2.0;
+        
+        // Для острого угла используем формулу: (halfThickness) / sin(angle/2)
+        // Это дает правильное продление до внешней грани примыкающей стены
+        double halfAngle = angle / 2.0;
+        double sinHalfAngle = Math.Sin(halfAngle);
+        
+        if (sinHalfAngle < 1e-6)
+        {
+            return sourceHalfThickness;
+        }
+
+        // Продление = половина толщины исходной стены + половина толщины примыкающей стены
+        // деленное на sin половины угла
+        double extension = (sourceHalfThickness + adjacentHalfThickness) / sinHalfAngle;
+        
+        // Ограничиваем максимальное продление разумным значением
+        double maxExtension = (sourceHalfThickness + adjacentHalfThickness) * 5.0;
+        return Math.Min(extension, maxExtension);
     }
     catch
     {
@@ -1738,7 +1822,7 @@ private static List<Line> GetExteriorFaceEdges(Wall wall)
         return GetWallThickness(other) / 2.0;
     }
 
-        return 0.0;
+    return 0.0;
 }
 
 /// <summary>
@@ -1789,30 +1873,30 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
             IntersectionResultArray intersectionResults;
             SetComparisonResult intersection = line.Intersect(existingLine, out intersectionResults);
 
-            // Если оси не пересекаются, проверяем перпендикулярное пересечение (стена входит в существующую)
+            // Если оси не пересекаются, проверяем, входит ли наша стена в существующую
             if (intersection == SetComparisonResult.Disjoint)
             {
-                // Проверяем, входит ли наша стена перпендикулярно в существующую
                 XYZ existingStart = existingLine.GetEndPoint(0);
                 XYZ existingEnd = existingLine.GetEndPoint(1);
                 XYZ existingDir = (existingEnd - existingStart).Normalize();
+                double existingLength = existingLine.Length;
                 
-                // Проверяем, перпендикулярны ли стены (или близки к перпендикулярным)
+                // Проверяем, перпендикулярны ли стены (строгая проверка через угол)
                 double dotProduct = Math.Abs(dir.DotProduct(existingDir));
-                const double perpendicularTolerance = 0.1; // ~85-95 градусов
+                double angle = Math.Acos(Math.Min(1.0, Math.Max(-1.0, dotProduct)));
+                double angleDegrees = angle * 180.0 / Math.PI;
                 
-                if (dotProduct > perpendicularTolerance)
+                // Проверяем, что угол близок к 90 градусам (85-95 градусов для Г-образных комнат)
+                const double minAngleDegrees = 85.0;
+                const double maxAngleDegrees = 95.0;
+                bool isPerpendicular = (angleDegrees >= minAngleDegrees && angleDegrees <= maxAngleDegrees);
+                
+                // Если стены не перпендикулярны, пропускаем
+                if (!isPerpendicular)
                 {
-                    // Стены не перпендикулярны, пропускаем
                     continue;
                 }
                 
-                // Проецируем концы нашей стены на ось существующей
-                double tStart = (start - existingStart).DotProduct(existingDir);
-                double tEnd = (end - existingStart).DotProduct(existingDir);
-                
-                // Проверяем, попадают ли концы нашей стены внутрь существующей стены
-                double existingLength = existingLine.Length;
                 double existingHalfThickness = GetWallThickness(existingWall) / 2.0;
                 double ourHalfThickness = GetWallThickness(excludeWall) / 2.0;
                 
@@ -1820,29 +1904,65 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                 XYZ existingNormal = new XYZ(-existingDir.Y, existingDir.X, 0.0).Normalize();
                 double distToExistingAxis = Math.Abs((start - existingStart).DotProduct(existingNormal));
                 
-                // Если наша стена находится близко к оси существующей (с учетом толщины) 
-                // и её концы попадают внутрь существующей
+                // Если наша стена находится близко к оси существующей (с учетом толщины)
                 if (distToExistingAxis < existingHalfThickness + ourHalfThickness + 0.1)
                 {
-                    // Проверяем, входит ли наша стена в существующую
+                    // Проецируем концы нашей стены на ось существующей
+                    double tStart = (start - existingStart).DotProduct(existingDir);
+                    double tEnd = (end - existingStart).DotProduct(existingDir);
+                    
                     // Проецируем границы существующей стены на нашу ось
                     double paramExistingStart = (existingStart - start).DotProduct(dir);
                     double paramExistingEnd = (existingEnd - start).DotProduct(dir);
                     
+                    // Проверяем, входит ли наша стена в существующую
                     // Если хотя бы один конец нашей стены попадает внутрь существующей
-                    bool startInside = (tStart > 0 && tStart < existingLength);
-                    bool endInside = (tEnd > 0 && tEnd < existingLength);
+                    bool startInside = (tStart > -0.1 && tStart < existingLength + 0.1);
+                    bool endInside = (tEnd > -0.1 && tEnd < existingLength + 0.1);
                     
                     if (startInside || endInside)
                     {
                         // Обрезаем части, которые входят в существующую стену
-                        if (paramExistingStart > minParam && paramExistingStart < maxParam)
+                        // Находим ближайшую границу существующей стены
+                        double distToStart1 = Math.Abs(paramExistingStart - minParam);
+                        double distToStart2 = Math.Abs(paramExistingStart - maxParam);
+                        double distToEnd1 = Math.Abs(paramExistingEnd - minParam);
+                        double distToEnd2 = Math.Abs(paramExistingEnd - maxParam);
+                        
+                        double minDistToStart = Math.Min(distToStart1, distToStart2);
+                        double minDistToEnd = Math.Min(distToEnd1, distToEnd2);
+                        
+                        // Используем ближайшую границу
+                        double nearestBoundary = (minDistToStart < minDistToEnd) ? paramExistingStart : paramExistingEnd;
+                        
+                        if (nearestBoundary > minParam && nearestBoundary < maxParam)
                         {
-                            maxParam = Math.Min(maxParam, paramExistingStart);
-                        }
-                        if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
-                        {
-                            minParam = Math.Max(minParam, paramExistingEnd);
+                            // Определяем, с какой стороны обрезать
+                            if (startInside && endInside)
+                            {
+                                // Оба конца входят - обрезаем до ближайшей границы с той стороны, которая ближе
+                                double distToMin = Math.Abs(nearestBoundary - minParam);
+                                double distToMax = Math.Abs(nearestBoundary - maxParam);
+                                
+                                if (distToMin < distToMax)
+                                {
+                                    minParam = nearestBoundary;
+                                }
+                                else
+                                {
+                                    maxParam = nearestBoundary;
+                                }
+                            }
+                            else if (startInside)
+                            {
+                                // Только начало входит - обрезаем начало
+                                minParam = Math.Max(minParam, nearestBoundary);
+                            }
+                            else if (endInside)
+                            {
+                                // Только конец входит - обрезаем конец
+                                maxParam = Math.Min(maxParam, nearestBoundary);
+                            }
                         }
                     }
                 }
@@ -1853,39 +1973,133 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
             // Обрабатываем точки пересечения
             if (intersectionResults != null && intersectionResults.Size > 0)
             {
-                for (int i = 0; i < intersectionResults.Size; i++)
+                // Проверяем, перпендикулярны ли стены (строгая проверка через угол)
+                XYZ existingStart = existingLine.GetEndPoint(0);
+                XYZ existingEnd = existingLine.GetEndPoint(1);
+                XYZ existingDir = (existingEnd - existingStart).Normalize();
+                double existingLength = existingLine.Length;
+                
+                // Вычисляем угол между стенами напрямую
+                double dotProduct = Math.Abs(dir.DotProduct(existingDir));
+                double angle = Math.Acos(Math.Min(1.0, Math.Max(-1.0, dotProduct)));
+                double angleDegrees = angle * 180.0 / Math.PI;
+                
+                // Проверяем, что угол близок к 90 градусам (85-95 градусов для Г-образных комнат)
+                const double minAngleDegrees = 85.0;
+                const double maxAngleDegrees = 95.0;
+                bool isPerpendicular = (angleDegrees >= minAngleDegrees && angleDegrees <= maxAngleDegrees);
+                
+                if (isPerpendicular)
                 {
-                    XYZ intersectionPoint = intersectionResults.get_Item(i).XYZPoint;
+                    // Стены перпендикулярны - обрезаем до внешней границы существующей стены
+                    // НО только если наша стена действительно входит в существующую стену
+                    double existingHalfThickness = GetWallThickness(existingWall) / 2.0;
+                    double ourHalfThickness = GetWallThickness(excludeWall) / 2.0;
                     
-                    // Вычисляем параметр точки пересечения на нашей кривой
-                    double param = (intersectionPoint - start).DotProduct(dir);
+                    // Определяем нормаль к существующей стене
+                    XYZ existingNormal = new XYZ(-existingDir.Y, existingDir.X, 0.0).Normalize();
                     
-                    // Обрезаем точно до точки пересечения
-                    // Если точка пересечения находится в начале кривой, обрезаем начало
-                    if (param <= minParam)
+                    // Используем точку пересечения осей
+                    XYZ intersectionPoint = intersectionResults.get_Item(0).XYZPoint;
+                    
+                    // Проецируем концы нашей стены на ось существующей
+                    double tStart = (start - existingStart).DotProduct(existingDir);
+                    double tEnd = (end - existingStart).DotProduct(existingDir);
+                    
+                    // Вычисляем расстояние от точки пересечения до оси существующей стены
+                    // Для перпендикулярных стен это расстояние должно быть близко к нулю
+                    double distToExistingAxis = Math.Abs((intersectionPoint - existingStart).DotProduct(existingNormal));
+                    
+                    // Проецируем концы нашей стены на ось существующей
+                    bool startInside = (tStart >= -0.1 && tStart <= existingLength + 0.1);
+                    bool endInside = (tEnd >= -0.1 && tEnd <= existingLength + 0.1);
+                    
+                    // Для перпендикулярных стен проверяем, действительно ли наша стена входит в существующую
+                    // Стены перекрываются, если расстояние до оси меньше суммы половин толщин
+                    // И хотя бы один конец нашей стены попадает в границы существующей стены
+                    bool wallsOverlap = distToExistingAxis < existingHalfThickness + ourHalfThickness + 0.1;
+                    
+                    // Обрезаем только если стены перекрываются И хотя бы один конец попадает в границы
+                    // Проверка перпендикулярности уже выполнена выше через угол (85-95 градусов)
+                    if (wallsOverlap && (startInside || endInside))
                     {
-                        minParam = param;
-                    }
-                    // Если точка пересечения находится в конце кривой, обрезаем конец
-                    else if (param >= maxParam)
-                    {
-                        maxParam = param;
-                    }
-                    // Если точка пересечения внутри кривой, обрезаем до неё
-                    else
-                    {
-                        // Определяем, с какой стороны обрезать
-                        // Обрезаем ту сторону, которая ближе к точке пересечения
-                        double distToStart = param - minParam;
-                        double distToEnd = maxParam - param;
+                        // Определяем, с какой стороны существующей стены находится наша стена
+                        XYZ fromExistingToOur = (start - intersectionPoint).Normalize();
+                        double side = fromExistingToOur.DotProduct(existingNormal);
                         
-                        if (distToStart < distToEnd)
+                        // Вычисляем параметр точки пересечения на нашей оси
+                        double paramIntersection = (intersectionPoint - start).DotProduct(dir);
+                        
+                        // Вычисляем смещение до внешней границы существующей стены
+                        // Смещение = halfThickness в направлении от оси существующей к нашей стене
+                        double offsetToExterior = existingHalfThickness;
+                        if (side < 0)
+                        {
+                            // Наша стена находится в противоположном направлении от нормали
+                            // Внешняя грань находится в направлении нормали
+                            offsetToExterior = -existingHalfThickness;
+                        }
+                        
+                        // Проецируем смещение на нашу ось
+                        // Для перпендикулярных стен смещение по нормали = смещение по нашей оси
+                        double paramOffset = offsetToExterior;
+                        
+                        // Вычисляем параметр внешней границы существующей стены на нашей оси
+                        double paramExteriorBoundary = paramIntersection + paramOffset;
+                        
+                        // Определяем, с какой стороны обрезать
+                        if (paramExteriorBoundary > minParam && paramExteriorBoundary < maxParam)
+                        {
+                            // Внешняя граница внутри нашей стены - обрезаем до неё
+                            double distToMin = Math.Abs(paramExteriorBoundary - minParam);
+                            double distToMax = Math.Abs(paramExteriorBoundary - maxParam);
+                            
+                            if (distToMin < distToMax)
+                            {
+                                // Ближе к началу - обрезаем начало
+                                minParam = paramExteriorBoundary;
+                            }
+                            else
+                            {
+                                // Ближе к концу - обрезаем конец
+                                maxParam = paramExteriorBoundary;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Стены не перпендикулярны - обрабатываем как обычное пересечение
+                    // Для острых/тупых углов просто обрезаем до точки пересечения
+                    for (int i = 0; i < intersectionResults.Size; i++)
+                    {
+                        XYZ intersectionPoint = intersectionResults.get_Item(i).XYZPoint;
+                        double param = (intersectionPoint - start).DotProduct(dir);
+                        
+                        if (param <= minParam)
                         {
                             minParam = param;
                         }
-                        else
+                        else if (param >= maxParam)
                         {
                             maxParam = param;
+                        }
+                        // Если точка пересечения внутри кривой, обрезаем до неё
+                        else
+                        {
+                            // Определяем, с какой стороны обрезать
+                            // Обрезаем ту сторону, которая ближе к точке пересечения
+                            double distToStart = param - minParam;
+                            double distToEnd = maxParam - param;
+                            
+                            if (distToStart < distToEnd)
+                            {
+                                minParam = param;
+                            }
+                            else
+                            {
+                                maxParam = param;
+                            }
                         }
                     }
                 }
@@ -1964,7 +2178,7 @@ private static Curve ExtendCurveToJoinedWalls(
     XYZ newP1 = p1 + dir * ext1;
 
     return Line.CreateBound(newP0, newP1);
-        }
+}
 
         /// <summary>
         /// Проверяет, является ли стена внешней по выбранным помещениям:
