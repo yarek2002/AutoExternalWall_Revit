@@ -2084,23 +2084,9 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                     
                     // Для перпендикулярных стен обрезаем до внешней грани существующей стены
                     // (той грани, которая не граничит с помещением)
+                    // Используем уже вычисленные параметры внешней грани из вышестоящего кода
                     if (startInside || endInside)
                     {
-                        // Определяем, с какой стороны существующей стены находится наша стена
-                        // Используем нормаль существующей стены для определения внешней грани
-                        // Внешняя грань находится в направлении, противоположном нормали (или по нормали, в зависимости от ориентации)
-                        
-                        // Определяем направление от существующей стены к нашей стене
-                        XYZ fromExistingToOur = (start - intersectionPoint);
-                        double side = fromExistingToOur.DotProduct(existingNormal);
-                        
-                        // Вычисляем смещение до внешней грани существующей стены
-                        // Если наша стена находится с положительной стороны нормали, внешняя грань с отрицательной
-                        double offsetToExterior = (side > 0) ? -existingHalfThickness : existingHalfThickness;
-                        
-                        // Вычисляем параметры внешней грани существующей стены на нашей оси
-                        double paramExteriorStart = paramExistingStart + offsetToExterior;
-                        double paramExteriorEnd = paramExistingEnd + offsetToExterior;
                         
                         // Обрезаем до внешней грани существующей стены
                         if (startInside && endInside)
