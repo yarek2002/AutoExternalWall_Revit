@@ -2369,7 +2369,9 @@ private static Curve ExtendCurveToJoinedWalls(
 
             int created = 0;
             // Словарь соответствия внутренних и внешних стен для создания проемов
-            Dictionary<ElementId, Wall> innerWallToExternalWallMap = new Dictionary<ElementId, Wall>();
+            // Ключ: Tuple<ElementId внутренней стены, ElementId помещения>
+            Dictionary<Tuple<ElementId, ElementId>, Wall> innerWallRoomToExternalWallMap = 
+                new Dictionary<Tuple<ElementId, ElementId>, Wall>();
 
             try
             {
@@ -2578,10 +2580,11 @@ private static Curve ExtendCurveToJoinedWalls(
                             created++;
                             // Добавляем ID созданной стены в список для исключения из проверки
                             createdWallIds.Add(externalWall.Id);
-                            // Сохраняем соответствие между внутренней и внешней стеной
-                            // Если для этой внутренней стены уже есть внешняя, используем последнюю созданную
-                            innerWallToExternalWallMap[innerWall.Id] = externalWall;
-                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id}");
+                            // Сохраняем соответствие между внутренней и внешней стеной с привязкой к помещению
+                            // Это важно, когда одна внутренняя стена используется несколькими помещениями
+                            Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(innerWall.Id, segment.Room.Id);
+                            innerWallRoomToExternalWallMap[key] = externalWall;
+                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id} помещения {segment.Room.Id}");
                         }
                     }
                 }
@@ -2590,7 +2593,7 @@ private static Curve ExtendCurveToJoinedWalls(
                 int totalJoinsCreated = 0;
                 foreach (Room room in rooms)
                 {
-                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallToExternalWallMap);
+                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallMap);
                     totalJoinsCreated += joinsCreated;
                 }
                 Log(doc, $"Соединена геометрия для {totalJoinsCreated} пар стен. Проемы будут созданы автоматически.");
@@ -2990,7 +2993,7 @@ private static Curve ExtendCurveToJoinedWalls(
         /// Создает проемы во внешних стенах на основе окон и дверей из внутренних стен
         /// Использует подход Room Finisher: соединяет геометрию стен и позволяет проемам автоматически прорезать обе стены
         /// </summary>
-        private static int JoinGeometryBetweenWalls(Document doc, Room room, Dictionary<ElementId, Wall> innerWallToExternalWallMap)
+        private static int JoinGeometryBetweenWalls(Document doc, Room room, Dictionary<Tuple<ElementId, ElementId>, Wall> innerWallRoomToExternalWallMap)
         {
             int joinsCreated = 0;
             int openingsProcessed = 0;
@@ -3030,10 +3033,18 @@ private static Curve ExtendCurveToJoinedWalls(
                 }
 
                 // Сначала соединяем геометрию между внутренними и внешними стенами
-                foreach (var kvp in innerWallToExternalWallMap)
+                // Обрабатываем только стены для текущего помещения
+                foreach (var kvp in innerWallRoomToExternalWallMap)
                 {
-                    ElementId innerWallId = kvp.Key;
+                    ElementId innerWallId = kvp.Key.Item1;
+                    ElementId roomId = kvp.Key.Item2;
                     Wall externalWall = kvp.Value;
+
+                    // Пропускаем стены, которые не относятся к текущему помещению
+                    if (roomId != room.Id)
+                    {
+                        continue;
+                    }
 
                     Wall innerWall = doc.GetElement(innerWallId) as Wall;
                     if (innerWall == null)
@@ -3217,7 +3228,9 @@ private static Curve ExtendCurveToJoinedWalls(
                     Wall hostWall = opening.Host as Wall;
                     if (hostWall == null) continue;
 
-                    if (innerWallToExternalWallMap.TryGetValue(hostWall.Id, out Wall externalWall))
+                    // Ищем внешнюю стену для этой внутренней стены и текущего помещения
+                    Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
+                    if (innerWallRoomToExternalWallMap.TryGetValue(key, out Wall externalWall))
                     {
                         // Проверяем, что стены соединены
                         if (JoinGeometryUtils.AreElementsJoined(doc, hostWall, externalWall))
@@ -3292,7 +3305,9 @@ private static Curve ExtendCurveToJoinedWalls(
             // Список ID созданных стен для исключения из проверки пересечений
             HashSet<ElementId> createdWallIds = new HashSet<ElementId>();
             // Словарь соответствия внутренних и внешних стен для создания проемов
-            Dictionary<ElementId, Wall> innerWallToExternalWallMap = new Dictionary<ElementId, Wall>();
+            // Ключ: Tuple<ElementId внутренней стены, ElementId помещения>
+            Dictionary<Tuple<ElementId, ElementId>, Wall> innerWallRoomToExternalWallMap = 
+                new Dictionary<Tuple<ElementId, ElementId>, Wall>();
 
             try
             {
@@ -3487,9 +3502,10 @@ private static Curve ExtendCurveToJoinedWalls(
                         created++;
                         // Добавляем ID созданной стены в список для исключения из проверки
                         createdWallIds.Add(externalWall.Id);
-                        // Сохраняем соответствие между внутренней и внешней стеной
-                        innerWallToExternalWallMap[innerWall.Id] = externalWall;
-                        Log(doc, $"Создана внешняя стена {externalWall.Id} для внутренней стены {innerWall.Id}");
+                        // Сохраняем соответствие между внутренней и внешней стеной с привязкой к помещению
+                        Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(innerWall.Id, room.Id);
+                        innerWallRoomToExternalWallMap[key] = externalWall;
+                        Log(doc, $"Создана внешняя стена {externalWall.Id} для внутренней стены {innerWall.Id} помещения {room.Id}");
                     }
                     else
                     {
@@ -3498,7 +3514,7 @@ private static Curve ExtendCurveToJoinedWalls(
                 }
 
                 // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
-                int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallToExternalWallMap);
+                int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallMap);
                 Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы будут созданы автоматически.");
 
                 Log(doc, $"Всего создано внешних стен: {created}");
