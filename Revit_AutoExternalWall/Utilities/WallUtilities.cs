@@ -1989,83 +1989,31 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         double paramExteriorStart = paramExistingStart + offsetToExterior;
                         double paramExteriorEnd = paramExistingEnd + offsetToExterior;
                         
-                        // Пробуем использовать реальную внешнюю грань через Revit API
-                        List<Line> exteriorEdges = GetExteriorFaceEdges(existingWall);
-                        bool foundExteriorIntersection = false;
-                        
-                        if (exteriorEdges != null && exteriorEdges.Count > 0)
+                        // Для перпендикулярных стен обрезаем до границ существующей стены (её концов)
+                        // Это работает для Г-образных комнат
+                        if (startInside)
                         {
-                            // Находим пересечение нашей стены с внешними гранями существующей стены
-                            foreach (Line exteriorEdge in exteriorEdges)
+                            // Обрезаем начало до ближайшей границы существующей стены
+                            double distToStart = Math.Abs(paramExistingStart - minParam);
+                            double distToEnd = Math.Abs(paramExistingEnd - minParam);
+                            double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
+                            
+                            if (nearestBoundary > minParam && nearestBoundary < maxParam)
                             {
-                                IntersectionResultArray edgeIntersectionResults;
-                                SetComparisonResult edgeIntersection = line.Intersect(exteriorEdge, out edgeIntersectionResults);
-                                
-                                if (edgeIntersection != SetComparisonResult.Disjoint && 
-                                    edgeIntersectionResults != null && 
-                                    edgeIntersectionResults.Size > 0)
-                                {
-                                    for (int i = 0; i < edgeIntersectionResults.Size; i++)
-                                    {
-                                        XYZ intersectionPoint = edgeIntersectionResults.get_Item(i).XYZPoint;
-                                        double param = (intersectionPoint - start).DotProduct(dir);
-                                        
-                                        // Проверяем, что точка пересечения находится в пределах нашей стены
-                                        // и близка к вычисленной внешней грани (для проверки правильности)
-                                        if (param >= minParam && param <= maxParam)
-                                        {
-                                            // Проверяем, что точка пересечения близка к вычисленной внешней грани
-                                            double distToExteriorStart = Math.Abs(param - paramExteriorStart);
-                                            double distToExteriorEnd = Math.Abs(param - paramExteriorEnd);
-                                            
-                                            if (distToExteriorStart < existingHalfThickness || distToExteriorEnd < existingHalfThickness)
-                                            {
-                                                foundExteriorIntersection = true;
-                                                
-                                                // Определяем, с какой стороны обрезать
-                                                if (startInside && param < (minParam + maxParam) / 2.0)
-                                                {
-                                                    // Ближе к началу - обрезаем начало
-                                                    minParam = Math.Max(minParam, param);
-                                                }
-                                                else if (endInside && param > (minParam + maxParam) / 2.0)
-                                                {
-                                                    // Ближе к концу - обрезаем конец
-                                                    maxParam = Math.Min(maxParam, param);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                minParam = nearestBoundary;
                             }
                         }
                         
-                        // Если не нашли пересечение с внешней гранью через API, используем математический расчет
-                        if (!foundExteriorIntersection)
+                        if (endInside)
                         {
-                            // Обрезаем до внешней грани существующей стены
-                            if (startInside)
-                            {
-                                double distToStart = Math.Abs(paramExteriorStart - minParam);
-                                double distToEnd = Math.Abs(paramExteriorEnd - minParam);
-                                double nearestExterior = (distToStart < distToEnd) ? paramExteriorStart : paramExteriorEnd;
-                                
-                                if (nearestExterior > minParam && nearestExterior < maxParam)
-                                {
-                                    minParam = nearestExterior;
-                                }
-                            }
+                            // Обрезаем конец до ближайшей границы существующей стены
+                            double distToStart = Math.Abs(paramExistingStart - maxParam);
+                            double distToEnd = Math.Abs(paramExistingEnd - maxParam);
+                            double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
                             
-                            if (endInside)
+                            if (nearestBoundary > minParam && nearestBoundary < maxParam)
                             {
-                                double distToStart = Math.Abs(paramExteriorStart - maxParam);
-                                double distToEnd = Math.Abs(paramExteriorEnd - maxParam);
-                                double nearestExterior = (distToStart < distToEnd) ? paramExteriorStart : paramExteriorEnd;
-                                
-                                if (nearestExterior > minParam && nearestExterior < maxParam)
-                                {
-                                    maxParam = nearestExterior;
-                                }
+                                maxParam = nearestBoundary;
                             }
                         }
                     }
@@ -2126,78 +2074,62 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         double offsetToExterior = (side > 0) ? existingHalfThickness : -existingHalfThickness;
                         double paramExteriorBoundary = paramIntersection + offsetToExterior;
                         
-                        // Пробуем использовать реальную внешнюю грань через Revit API для уточнения
-                        List<Line> exteriorEdges = GetExteriorFaceEdges(existingWall);
-                        double bestParam = paramExteriorBoundary;
-                        bool useExteriorEdge = false;
+                        // Для перпендикулярных стен обрезаем до границ существующей стены (её концов)
+                        // Это работает для Г-образных комнат
+                        // Проецируем концы существующей стены на нашу ось
+                        double paramExistingStart = (existingStart - start).DotProduct(dir);
+                        double paramExistingEnd = (existingEnd - start).DotProduct(dir);
                         
-                        if (exteriorEdges != null && exteriorEdges.Count > 0)
-                        {
-                            double minDist = double.MaxValue;
-                            
-                            foreach (Line exteriorEdge in exteriorEdges)
-                            {
-                                IntersectionResultArray edgeIntersectionResults;
-                                SetComparisonResult edgeIntersection = line.Intersect(exteriorEdge, out edgeIntersectionResults);
-                                
-                                if (edgeIntersection != SetComparisonResult.Disjoint && 
-                                    edgeIntersectionResults != null && 
-                                    edgeIntersectionResults.Size > 0)
-                                {
-                                    for (int i = 0; i < edgeIntersectionResults.Size; i++)
-                                    {
-                                        XYZ edgeIntersectionPoint = edgeIntersectionResults.get_Item(i).XYZPoint;
-                                        double param = (edgeIntersectionPoint - start).DotProduct(dir);
-                                        
-                                        // Выбираем точку пересечения, которая близка к вычисленной внешней грани
-                                        double dist = Math.Abs(param - paramExteriorBoundary);
-                                        if (dist < minDist && param >= minParam && param <= maxParam && dist < existingHalfThickness * 2.0)
-                                        {
-                                            minDist = dist;
-                                            bestParam = param;
-                                            useExteriorEdge = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Обрезаем до найденной точки пересечения с внешней гранью или вычисленной грани
                         if (startInside && endInside)
                         {
-                            // Оба конца входят - обрезаем до внешней грани с той стороны, которая ближе
-                            double distToMin = Math.Abs(bestParam - minParam);
-                            double distToMax = Math.Abs(bestParam - maxParam);
+                            // Оба конца входят - обрезаем до ближайшей границы существующей стены
+                            double distToStartMin = Math.Abs(paramExistingStart - minParam);
+                            double distToEndMin = Math.Abs(paramExistingEnd - minParam);
+                            double distToStartMax = Math.Abs(paramExistingStart - maxParam);
+                            double distToEndMax = Math.Abs(paramExistingEnd - maxParam);
                             
-                            if (distToMin < distToMax)
+                            double minDistToMin = Math.Min(distToStartMin, distToEndMin);
+                            double minDistToMax = Math.Min(distToStartMax, distToEndMax);
+                            
+                            if (minDistToMin < minDistToMax)
                             {
-                                if (bestParam > minParam && bestParam < maxParam)
+                                double nearestBoundary = (distToStartMin < distToEndMin) ? paramExistingStart : paramExistingEnd;
+                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
                                 {
-                                    minParam = bestParam;
+                                    minParam = nearestBoundary;
                                 }
                             }
                             else
                             {
-                                if (bestParam > minParam && bestParam < maxParam)
+                                double nearestBoundary = (distToStartMax < distToEndMax) ? paramExistingStart : paramExistingEnd;
+                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
                                 {
-                                    maxParam = bestParam;
+                                    maxParam = nearestBoundary;
                                 }
                             }
                         }
                         else if (startInside)
                         {
-                            // Только начало входит - обрезаем начало до внешней грани
-                            if (bestParam > minParam && bestParam < maxParam)
+                            // Только начало входит - обрезаем начало до ближайшей границы
+                            double distToStart = Math.Abs(paramExistingStart - minParam);
+                            double distToEnd = Math.Abs(paramExistingEnd - minParam);
+                            double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
+                            
+                            if (nearestBoundary > minParam && nearestBoundary < maxParam)
                             {
-                                minParam = bestParam;
+                                minParam = nearestBoundary;
                             }
                         }
                         else if (endInside)
                         {
-                            // Только конец входит - обрезаем конец до внешней грани
-                            if (bestParam > minParam && bestParam < maxParam)
+                            // Только конец входит - обрезаем конец до ближайшей границы
+                            double distToStart = Math.Abs(paramExistingStart - maxParam);
+                            double distToEnd = Math.Abs(paramExistingEnd - maxParam);
+                            double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
+                            
+                            if (nearestBoundary > minParam && nearestBoundary < maxParam)
                             {
-                                maxParam = bestParam;
+                                maxParam = nearestBoundary;
                             }
                         }
                     }
