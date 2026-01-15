@@ -3781,14 +3781,6 @@ private static Curve ExtendCurveToJoinedWalls(
                 {
                     Log(doc, $"Скопировано {copiedOpenings} окон/дверей во внешние стены.");
                 }
-                
-                // Копируем окна и двери из внутренних стен во внешние
-                List<Room> singleRoomList = new List<Room> { room };
-                int copiedOpenings = CopyOpeningsToExternalWalls(doc, singleRoomList, innerWallRoomToExternalWallsMap);
-                if (copiedOpenings > 0)
-                {
-                    Log(doc, $"Скопировано {copiedOpenings} окон/дверей во внешние стены.");
-                }
 
                 Log(doc, $"Всего создано внешних стен: {created}");
             }
