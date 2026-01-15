@@ -2586,14 +2586,14 @@ private static Curve ExtendCurveToJoinedWalls(
                     }
                 }
 
-                // Создаем проемы в стенах на основе окон и дверей из всех помещений
-                int totalOpeningsCreated = 0;
+                // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
+                int totalJoinsCreated = 0;
                 foreach (Room room in rooms)
                 {
-                    int openingsCreated = CreateOpeningsInWalls(doc, room, innerWallToExternalWallMap);
-                    totalOpeningsCreated += openingsCreated;
+                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallToExternalWallMap);
+                    totalJoinsCreated += joinsCreated;
                 }
-                Log(doc, $"Создано проемов в стенах: {totalOpeningsCreated}");
+                Log(doc, $"Соединена геометрия для {totalJoinsCreated} пар стен. Проемы будут созданы автоматически.");
 
                 Log(doc, $"Всего создано внешних стен: {created}");
             }
@@ -2987,178 +2987,63 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
-        /// Создает проемы в стенах на основе окон и дверей из помещения
+        /// Соединяет геометрию между внутренними и внешними стенами для автоматического создания проемов
+        /// Когда стены соединены через Join Geometry, проемы из окон и дверей автоматически прорезают обе стены
         /// </summary>
-        private static int CreateOpeningsInWalls(Document doc, Room room, Dictionary<ElementId, Wall> innerWallToExternalWallMap)
+        private static int JoinGeometryBetweenWalls(Document doc, Room room, Dictionary<ElementId, Wall> innerWallToExternalWallMap)
         {
-            int openingsCreated = 0;
+            int joinsCreated = 0;
 
             try
             {
-                // Получаем окна и двери из помещения
+                // Получаем окна и двери из помещения для логирования
                 List<FamilyInstance> openings = GetWindowsAndDoorsFromRoom(doc, room);
 
-                if (openings.Count == 0)
+                if (openings.Count > 0)
                 {
-                    Log(doc, $"В помещении {room.Id} не найдено окон и дверей");
-                    return 0;
+                    Log(doc, $"Найдено окон и дверей в помещении {room.Id}: {openings.Count}");
                 }
 
-                Log(doc, $"Найдено окон и дверей в помещении {room.Id}: {openings.Count}");
-
-                foreach (FamilyInstance opening in openings)
+                // Соединяем геометрию между внутренними и внешними стенами
+                foreach (var kvp in innerWallToExternalWallMap)
                 {
-                    Wall hostWall = opening.Host as Wall;
-                    if (hostWall == null) continue;
+                    ElementId innerWallId = kvp.Key;
+                    Wall externalWall = kvp.Value;
 
-                    // Находим соответствующую внешнюю стену
-                    if (!innerWallToExternalWallMap.TryGetValue(hostWall.Id, out Wall externalWall))
-                    {
-                        Log(doc, $"Не найдена внешняя стена для внутренней стены {hostWall.Id}");
-                        continue;
-                    }
+                    Wall innerWall = doc.GetElement(innerWallId) as Wall;
+                    if (innerWall == null) continue;
 
-                    // Получаем геометрию окна/двери
-                    Options options = new Options();
-                    options.ComputeReferences = true;
-                    options.DetailLevel = ViewDetailLevel.Fine;
-                    GeometryElement geom = opening.get_Geometry(options);
-
-                    if (geom == null) continue;
-
-                    // Получаем bounding box окна/двери
-                    BoundingBoxXYZ openingBbox = opening.get_BoundingBox(null);
-                    if (openingBbox == null) continue;
-
-                    // Получаем параметры окна/двери для определения размеров проема
-                    // Сначала пробуем получить из параметров семейства
-                    double width = 0.0;
-                    double height = 0.0;
-                    
-                    Parameter widthParam = opening.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
-                    Parameter heightParam = opening.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
-                    
-                    if (widthParam != null && widthParam.HasValue)
-                        width = widthParam.AsDouble();
-                    if (heightParam != null && heightParam.HasValue)
-                        height = heightParam.AsDouble();
-                    
-                    // Если параметры не найдены или слишком малы, используем bounding box
-                    if (width < 0.1 || height < 0.1)
-                    {
-                        width = Math.Abs(openingBbox.Max.X - openingBbox.Min.X);
-                        height = Math.Abs(openingBbox.Max.Z - openingBbox.Min.Z);
-                    }
-
-                    if (width < 0.1 || height < 0.1)
-                    {
-                        Log(doc, $"Не удалось определить размеры для окна/двери {opening.Id}");
-                        continue;
-                    }
-
-                    // Получаем позицию окна/двери на стене
-                    LocationPoint locationPoint = opening.Location as LocationPoint;
-                    LocationCurve locationCurve = opening.Location as LocationCurve;
-                    
-                    XYZ openingPosition = null;
-                    if (locationPoint != null)
-                    {
-                        openingPosition = locationPoint.Point;
-                    }
-                    else if (locationCurve != null && locationCurve.Curve != null)
-                    {
-                        // Берем середину кривой
-                        openingPosition = locationCurve.Curve.Evaluate(0.5, true);
-                    }
-
-                    if (openingPosition == null)
-                    {
-                        Log(doc, $"Не удалось определить позицию окна/двери {opening.Id}");
-                        continue;
-                    }
-
-                    // Получаем кривую внешней стены
-                    LocationCurve externalWallLocation = externalWall.Location as LocationCurve;
-                    if (externalWallLocation == null || externalWallLocation.Curve == null)
-                    {
-                        Log(doc, $"Внешняя стена {externalWall.Id} не имеет кривой расположения");
-                        continue;
-                    }
-
-                    // Проецируем позицию окна/двери на внешнюю стену
-                    Curve externalWallCurve = externalWallLocation.Curve;
-                    XYZ projectedPoint = externalWallCurve.Project(openingPosition).XYZPoint;
-
-                    // Определяем направление стены
-                    XYZ wallDirection = (externalWallCurve.GetEndPoint(1) - externalWallCurve.GetEndPoint(0)).Normalize();
-                    XYZ wallNormal = new XYZ(-wallDirection.Y, wallDirection.X, 0.0).Normalize();
-
-                    // Вычисляем нижнюю и верхнюю точки проема
-                    Level wallLevel = GetWallLevel(externalWall);
-                    double wallBaseElevation = wallLevel != null ? wallLevel.Elevation : 0.0;
-                    
-                    // Получаем высоту подоконника/порога из параметров окна/двери
-                    double sillHeight = 0.0;
-                    Parameter sillParam = opening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                    if (sillParam != null && sillParam.HasValue)
-                    {
-                        sillHeight = sillParam.AsDouble();
-                    }
-
-                    double bottomElevation = wallBaseElevation + sillHeight;
-                    double topElevation = bottomElevation + height;
-
-                    // Вычисляем центр проема по ширине
-                    double halfWidth = width / 2.0;
-                    XYZ centerPoint = projectedPoint;
-                    XYZ leftPoint = centerPoint - wallDirection * halfWidth;
-                    XYZ rightPoint = centerPoint + wallDirection * halfWidth;
-
-                    // Создаем прямоугольник проема
-                    XYZ bottomLeft = new XYZ(leftPoint.X, leftPoint.Y, bottomElevation);
-                    XYZ bottomRight = new XYZ(rightPoint.X, rightPoint.Y, bottomElevation);
-                    XYZ topRight = new XYZ(rightPoint.X, rightPoint.Y, topElevation);
-                    XYZ topLeft = new XYZ(leftPoint.X, leftPoint.Y, topElevation);
-
-                    // Создаем проем в стене
                     try
                     {
-                        // Вычисляем две точки для прямоугольного проема
-                        // Используем нижнюю левую и верхнюю правую точки
-                        XYZ minPoint = new XYZ(
-                            Math.Min(Math.Min(bottomLeft.X, bottomRight.X), Math.Min(topLeft.X, topRight.X)),
-                            Math.Min(Math.Min(bottomLeft.Y, bottomRight.Y), Math.Min(topLeft.Y, topRight.Y)),
-                            bottomElevation
-                        );
-                        XYZ maxPoint = new XYZ(
-                            Math.Max(Math.Max(bottomLeft.X, bottomRight.X), Math.Max(topLeft.X, topRight.X)),
-                            Math.Max(Math.Max(bottomLeft.Y, bottomRight.Y), Math.Max(topLeft.Y, topRight.Y)),
-                            topElevation
-                        );
-
-                        // Создаем проем через метод экземпляра Document
-                        // Используем явное указание типа для избежания конфликта имен
-                        // Метод NewOpening(Wall, XYZ, XYZ) создает прямоугольный проем
-                        Autodesk.Revit.DB.Opening openingElement = ((Autodesk.Revit.DB.Document)doc).NewOpening(externalWall, minPoint, maxPoint);
-
-                        if (openingElement != null)
+                        // Проверяем, не соединены ли уже стены
+                        if (JoinGeometryUtils.AreElementsJoined(doc, innerWall, externalWall))
                         {
-                            openingsCreated++;
-                            Log(doc, $"Создан проем {openingElement.Id} в стене {externalWall.Id} для окна/двери {opening.Id}");
+                            Log(doc, $"Стены {innerWall.Id} и {externalWall.Id} уже соединены");
+                            continue;
                         }
+
+                        // Соединяем геометрию между внутренней и внешней стеной
+                        JoinGeometryUtils.JoinGeometry(doc, innerWall, externalWall);
+                        joinsCreated++;
+                        Log(doc, $"Соединена геометрия между внутренней стеной {innerWall.Id} и внешней стеной {externalWall.Id}");
                     }
                     catch (Exception ex)
                     {
-                        Log(doc, $"Ошибка при создании проема: {ex.Message}");
+                        Log(doc, $"Ошибка при соединении геометрии стен {innerWall.Id} и {externalWall.Id}: {ex.Message}");
                     }
+                }
+
+                if (joinsCreated > 0 && openings.Count > 0)
+                {
+                    Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы из {openings.Count} окон/дверей будут автоматически прорезать внешние стены.");
                 }
             }
             catch (Exception ex)
             {
-                Log(doc, $"Ошибка при создании проемов в стенах: {ex.Message}");
+                Log(doc, $"Ошибка при соединении геометрии стен: {ex.Message}");
             }
 
-            return openingsCreated;
+            return joinsCreated;
         }
 
         /// <summary>
@@ -3379,9 +3264,9 @@ private static Curve ExtendCurveToJoinedWalls(
                     }
                 }
 
-                // Создаем проемы в стенах на основе окон и дверей из помещения
-                int openingsCreated = CreateOpeningsInWalls(doc, room, innerWallToExternalWallMap);
-                Log(doc, $"Создано проемов в стенах: {openingsCreated}");
+                // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
+                int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallToExternalWallMap);
+                Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы будут созданы автоматически.");
 
                 Log(doc, $"Всего создано внешних стен: {created}");
             }
