@@ -3123,21 +3123,21 @@ private static Curve ExtendCurveToJoinedWalls(
                     // Создаем проем в стене
                     try
                     {
-                        // Используем BoundingBoxXYZ для создания проема
-                        // WallOpening.Create требует BoundingBoxXYZ в системе координат стены
-                        BoundingBoxXYZ openingBboxForWall = new BoundingBoxXYZ();
-                        
-                        // Вычисляем минимальные и максимальные координаты проема
-                        double minX = Math.Min(Math.Min(bottomLeft.X, bottomRight.X), Math.Min(topLeft.X, topRight.X));
-                        double maxX = Math.Max(Math.Max(bottomLeft.X, bottomRight.X), Math.Max(topLeft.X, topRight.X));
-                        double minY = Math.Min(Math.Min(bottomLeft.Y, bottomRight.Y), Math.Min(topLeft.Y, topRight.Y));
-                        double maxY = Math.Max(Math.Max(bottomLeft.Y, bottomRight.Y), Math.Max(topLeft.Y, topRight.Y));
-                        
-                        openingBboxForWall.Min = new XYZ(minX, minY, bottomElevation);
-                        openingBboxForWall.Max = new XYZ(maxX, maxY, topElevation);
+                        // Используем doc.NewOpening для создания проема в стене
+                        // Метод принимает два XYZ точки (нижний левый и верхний правый углы проема)
+                        XYZ minPoint = new XYZ(
+                            Math.Min(Math.Min(bottomLeft.X, bottomRight.X), Math.Min(topLeft.X, topRight.X)),
+                            Math.Min(Math.Min(bottomLeft.Y, bottomRight.Y), Math.Min(topLeft.Y, topRight.Y)),
+                            bottomElevation
+                        );
+                        XYZ maxPoint = new XYZ(
+                            Math.Max(Math.Max(bottomLeft.X, bottomRight.X), Math.Max(topLeft.X, topRight.X)),
+                            Math.Max(Math.Max(bottomLeft.Y, bottomRight.Y), Math.Max(topLeft.Y, topRight.Y)),
+                            topElevation
+                        );
 
-                        // Создаем проем через WallOpening.Create
-                        WallOpening openingElement = WallOpening.Create(doc, externalWall.Id, openingBboxForWall);
+                        // Создаем проем через doc.NewOpening
+                        Opening openingElement = doc.NewOpening(externalWall, minPoint, maxPoint);
 
                         if (openingElement != null)
                         {
