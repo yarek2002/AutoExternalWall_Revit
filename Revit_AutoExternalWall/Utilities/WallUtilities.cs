@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.Creation;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -3123,21 +3124,16 @@ private static Curve ExtendCurveToJoinedWalls(
                     // Создаем проем в стене
                     try
                     {
-                        // Используем doc.NewOpening для создания проема в стене
-                        // Метод принимает два XYZ точки (нижний левый и верхний правый углы проема)
-                        XYZ minPoint = new XYZ(
-                            Math.Min(Math.Min(bottomLeft.X, bottomRight.X), Math.Min(topLeft.X, topRight.X)),
-                            Math.Min(Math.Min(bottomLeft.Y, bottomRight.Y), Math.Min(topLeft.Y, topRight.Y)),
-                            bottomElevation
-                        );
-                        XYZ maxPoint = new XYZ(
-                            Math.Max(Math.Max(bottomLeft.X, bottomRight.X), Math.Max(topLeft.X, topRight.X)),
-                            Math.Max(Math.Max(bottomLeft.Y, bottomRight.Y), Math.Max(topLeft.Y, topRight.Y)),
-                            topElevation
-                        );
+                        // Используем CurveArray для создания профиля проема
+                        // Создаем замкнутый контур прямоугольного проема
+                        CurveArray profile = new CurveArray();
+                        profile.Append(Line.CreateBound(bottomLeft, bottomRight));
+                        profile.Append(Line.CreateBound(bottomRight, topRight));
+                        profile.Append(Line.CreateBound(topRight, topLeft));
+                        profile.Append(Line.CreateBound(topLeft, bottomLeft));
 
-                        // Создаем проем через doc.NewOpening
-                        Opening openingElement = doc.NewOpening(externalWall, minPoint, maxPoint);
+                        // Создаем проем через doc.NewOpening с профилем
+                        Opening openingElement = doc.NewOpening(externalWall, profile);
 
                         if (openingElement != null)
                         {
