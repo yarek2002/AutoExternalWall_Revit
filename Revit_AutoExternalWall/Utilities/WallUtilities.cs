@@ -2100,32 +2100,28 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                                                    (endInside && (startOutsideLeft || startOutsideRight));
                         
                         // Для внутренних углов П-образной комнаты: если оба конца внутри существующей стены,
-                        // всегда обрезаем до концов существующей стены, чтобы стена не входила перпендикулярно
+                        // это П-образная форма - всегда обрезаем до концов существующей стены
+                        bool bothInsideButPassesThrough = false;
                         if (startInside && endInside)
                         {
-                            // Оба конца внутри - обрезаем до обоих концов существующей стены
-                            if (paramExistingStart > minParam && paramExistingStart < maxParam)
-                            {
-                                minParam = paramExistingStart;
-                            }
-                            if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
-                            {
-                                maxParam = paramExistingEnd;
-                            }
+                            // Для внутренних углов П-образной комнаты всегда обрезаем до концов
+                            bothInsideButPassesThrough = true;
                         }
-                        else if (passesThrough || oneInsideOneOutside)
+                        
+                        if (passesThrough || oneInsideOneOutside || bothInsideButPassesThrough)
                         {
                             // П-образная форма - обрезаем до концов существующей стены
-                            if (passesThrough)
+                            if (bothInsideButPassesThrough)
                             {
-                                // Стена проходит через всю ширину - обрезаем до обоих концов
-                                if (paramExistingStart > minParam && paramExistingStart < maxParam)
+                                // Оба конца внутри - обрезаем до концов существующей стены
+                                // Обрезаем независимо от того, находятся ли концы внутри нашей стены
+                                if (paramExistingStart > minParam)
                                 {
-                                    minParam = paramExistingStart;
+                                    minParam = Math.Max(minParam, paramExistingStart);
                                 }
-                                if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
+                                if (paramExistingEnd < maxParam)
                                 {
-                                    maxParam = paramExistingEnd;
+                                    maxParam = Math.Min(maxParam, paramExistingEnd);
                                 }
                             }
                             else
