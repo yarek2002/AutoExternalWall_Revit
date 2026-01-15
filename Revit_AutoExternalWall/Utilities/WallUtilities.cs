@@ -2091,13 +2091,25 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         bool endOutsideLeft = (tEnd < -0.1);
                         bool endOutsideRight = (tEnd > existingLength + 0.1);
                         
-                        // П-образная форма: стена проходит через существующую стену или один конец внутри, другой снаружи
+                        // П-образная форма: стена проходит через существующую стену (один конец слева, другой справа)
+                        // или один конец внутри, другой снаружи
                         bool passesThrough = (startOutsideLeft && endOutsideRight) || (startOutsideRight && endOutsideLeft);
                         bool oneInsideOneOutside = (startInside && (endOutsideLeft || endOutsideRight)) || 
                                                    (endInside && (startOutsideLeft || startOutsideRight));
                         
-                        // Для внутренних углов П-образной комнаты: оба конца внутри
-                        bool bothInsideUShape = (startInside && endInside);
+                        // Для внутренних углов П-образной комнаты: оба конца внутри, но стена проходит через большую часть ширины
+                        bool bothInsideUShape = false;
+                        if (startInside && endInside)
+                        {
+                            // Проверяем, проходит ли стена через большую часть ширины существующей стены
+                            double span = Math.Abs(tEnd - tStart);
+                            double coverageRatio = span / existingLength;
+                            // Если стена покрывает более 80% ширины существующей стены, это внутренний угол П-образной комнаты
+                            if (coverageRatio > 0.8)
+                            {
+                                bothInsideUShape = true;
+                            }
+                        }
                         
                         bool isUShape = passesThrough || oneInsideOneOutside || bothInsideUShape;
                         
