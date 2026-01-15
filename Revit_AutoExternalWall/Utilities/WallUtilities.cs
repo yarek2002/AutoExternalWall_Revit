@@ -3341,8 +3341,9 @@ private static Curve ExtendCurveToJoinedWalls(
             HashSet<ElementId> createdWallIds = new HashSet<ElementId>();
             // Словарь соответствия внутренних и внешних стен для создания проемов
             // Ключ: Tuple<ElementId внутренней стены, ElementId помещения>
-            Dictionary<Tuple<ElementId, ElementId>, Wall> innerWallRoomToExternalWallMap = 
-                new Dictionary<Tuple<ElementId, ElementId>, Wall>();
+            // Значение: Список внешних стен (может быть несколько, если стена разделена на сегменты)
+            Dictionary<Tuple<ElementId, ElementId>, List<Wall>> innerWallRoomToExternalWallsMap = 
+                new Dictionary<Tuple<ElementId, ElementId>, List<Wall>>();
 
             try
             {
