@@ -3,6 +3,7 @@ using Autodesk.Revit.DB.Architecture;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Revit_AutoExternalWall;
 
 namespace Revit_AutoExternalWall.Utilities
 {
@@ -2596,19 +2597,21 @@ private static Curve ExtendCurveToJoinedWalls(
                 }
 
                 // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
-                int totalJoinsCreated = 0;
-                foreach (Room room in rooms)
+                // Проверяем настройки: создавать ли проемы
+                Settings settings = Settings.Load();
+                if (settings.CreateOpenings)
                 {
-                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
-                    totalJoinsCreated += joinsCreated;
+                    int totalJoinsCreated = 0;
+                    foreach (Room room in rooms)
+                    {
+                        int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
+                        totalJoinsCreated += joinsCreated;
+                    }
+                    Log(doc, $"Соединена геометрия для {totalJoinsCreated} пар стен. Проемы будут созданы автоматически.");
                 }
-                Log(doc, $"Соединена геометрия для {totalJoinsCreated} пар стен. Проемы будут созданы автоматически.");
-                
-                // Копируем окна и двери из внутренних стен во внешние
-                int copiedOpenings = CopyOpeningsToExternalWalls(doc, rooms, innerWallRoomToExternalWallsMap);
-                if (copiedOpenings > 0)
+                else
                 {
-                    Log(doc, $"Скопировано {copiedOpenings} окон/дверей во внешние стены.");
+                    Log(doc, "Создание проемов отключено в настройках. Пропускаем соединение геометрии.");
                 }
 
                 Log(doc, $"Всего создано внешних стен: {created}");
@@ -3335,215 +3338,6 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
-        /// Копирует окна и двери из внутренних стен во внешние стены
-        /// </summary>
-        private static int CopyOpeningsToExternalWalls(Document doc, List<Room> rooms, Dictionary<Tuple<ElementId, ElementId>, List<Wall>> innerWallRoomToExternalWallsMap)
-        {
-            int copiedCount = 0;
-
-            try
-            {
-                doc.Regenerate(); // Убеждаемся, что проемы созданы
-
-                foreach (Room room in rooms)
-                {
-                    // Получаем окна и двери из помещения
-                    List<FamilyInstance> openings = GetWindowsAndDoorsFromRoom(doc, room);
-
-                    foreach (FamilyInstance opening in openings)
-                    {
-                        Wall hostWall = opening.Host as Wall;
-                        if (hostWall == null) continue;
-
-                        // Ищем внешние стены для этой внутренней стены и помещения
-                        Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
-                        if (!innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWalls))
-                        {
-                            continue;
-                        }
-
-                        // Получаем параметры исходного окна/двери
-                        FamilySymbol familySymbol = opening.Symbol;
-                        if (familySymbol == null) continue;
-
-                        // Активируем семейство, если оно не активно
-                        if (!familySymbol.IsActive)
-                        {
-                            try
-                            {
-                                familySymbol.Activate();
-                                doc.Regenerate();
-                            }
-                            catch (Exception ex)
-                            {
-                                Log(doc, $"Не удалось активировать семейство {familySymbol.Name}: {ex.Message}");
-                                continue;
-                            }
-                        }
-
-                        // Получаем уровень
-                        Level level = doc.GetElement(opening.LevelId) as Level;
-                        if (level == null)
-                        {
-                            level = GetWallLevel(hostWall);
-                        }
-                        if (level == null) continue;
-
-                        // Получаем положение окна/двери
-                        LocationPoint locationPoint = opening.Location as LocationPoint;
-                        LocationCurve locationCurve = opening.Location as LocationCurve;
-
-                        // Получаем высоту подоконника (sill height)
-                        double sillHeight = 0.0;
-                        Parameter sillHeightParam = opening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                        if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
-                        {
-                            sillHeight = sillHeightParam.AsDouble();
-                        }
-
-                        // Для каждой внешней стены создаем копию окна/двери
-                        foreach (Wall externalWall in externalWalls)
-                        {
-                            try
-                            {
-                                FamilyInstance newOpening = null;
-
-                                if (locationPoint != null)
-                                {
-                                    // Окно/дверь размещено по точке
-                                    XYZ point = locationPoint.Point;
-                                    
-                                    // Проверяем, находится ли точка на внешней стене
-                                    LocationCurve wallLocation = externalWall.Location as LocationCurve;
-                                    if (wallLocation != null && wallLocation.Curve != null)
-                                    {
-                                        // Находим ближайшую точку на кривой стены
-                                        double param = wallLocation.Curve.Project(point).Parameter;
-                                        XYZ pointOnWall = wallLocation.Curve.Evaluate(param, true);
-                                        
-                                        // Создаем новое окно/дверь
-                                        newOpening = doc.Create.NewFamilyInstance(
-                                            pointOnWall,
-                                            familySymbol,
-                                            externalWall,
-                                            level,
-                                            Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                                    }
-                                }
-                                else if (locationCurve != null)
-                                {
-                                    // Окно/дверь размещено по кривой (например, для дверей)
-                                    Curve curve = locationCurve.Curve;
-                                    if (curve != null)
-                                    {
-                                        // Получаем среднюю точку кривой
-                                        XYZ midPoint = curve.Evaluate(0.5, true);
-                                        
-                                        // Проверяем, находится ли точка на внешней стене
-                                        LocationCurve wallLocation = externalWall.Location as LocationCurve;
-                                        if (wallLocation != null && wallLocation.Curve != null)
-                                        {
-                                            // Находим ближайшую точку на кривой стены
-                                            double param = wallLocation.Curve.Project(midPoint).Parameter;
-                                            XYZ pointOnWall = wallLocation.Curve.Evaluate(param, true);
-                                            
-                                            // Создаем новое окно/дверь
-                                            newOpening = doc.Create.NewFamilyInstance(
-                                                pointOnWall,
-                                                familySymbol,
-                                                externalWall,
-                                                level,
-                                                Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-                                        }
-                                    }
-                                }
-
-                                if (newOpening != null)
-                                {
-                                    // Копируем параметры из исходного окна/двери
-                                    if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
-                                    {
-                                        Parameter newSillHeightParam = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                                        if (newSillHeightParam != null && !newSillHeightParam.IsReadOnly)
-                                        {
-                                            newSillHeightParam.Set(sillHeight);
-                                        }
-                                    }
-
-                                    // Копируем другие важные параметры
-                                    CopyInstanceParameters(opening, newOpening);
-
-                                    copiedCount++;
-                                    Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
-                            }
-                        }
-                    }
-                }
-
-                doc.Regenerate();
-            }
-            catch (Exception ex)
-            {
-                Log(doc, $"Ошибка при копировании окон/дверей во внешние стены: {ex.Message}");
-            }
-
-            return copiedCount;
-        }
-
-        /// <summary>
-        /// Копирует параметры экземпляра из одного FamilyInstance в другой
-        /// </summary>
-        private static void CopyInstanceParameters(FamilyInstance source, FamilyInstance target)
-        {
-            try
-            {
-                foreach (Parameter sourceParam in source.Parameters)
-                {
-                    if (sourceParam.IsReadOnly || !sourceParam.HasValue) continue;
-
-                    Parameter targetParam = target.LookupParameter(sourceParam.Definition.Name);
-                    if (targetParam == null || targetParam.IsReadOnly) continue;
-
-                    try
-                    {
-                        switch (sourceParam.StorageType)
-                        {
-                            case StorageType.Double:
-                                targetParam.Set(sourceParam.AsDouble());
-                                break;
-                            case StorageType.Integer:
-                                targetParam.Set(sourceParam.AsInteger());
-                                break;
-                            case StorageType.String:
-                                targetParam.Set(sourceParam.AsString());
-                                break;
-                            case StorageType.ElementId:
-                                ElementId id = sourceParam.AsElementId();
-                                if (id != null && id != ElementId.InvalidElementId)
-                                {
-                                    targetParam.Set(id);
-                                }
-                                break;
-                        }
-                    }
-                    catch
-                    {
-                        // Игнорируем ошибки при копировании отдельных параметров
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // Логируем ошибку, но не прерываем выполнение
-            }
-        }
-
-        /// <summary>
         /// Новая простая логика создания внешних стен для одного помещения.
         /// Создает внешние стены, повторяющие границы стен помещения.
         /// </summary>
@@ -3771,15 +3565,16 @@ private static Curve ExtendCurveToJoinedWalls(
                 }
 
                 // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
-                int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
-                Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы будут созданы автоматически.");
-                
-                // Копируем окна и двери из внутренних стен во внешние
-                List<Room> singleRoomList = new List<Room> { room };
-                int copiedOpenings = CopyOpeningsToExternalWalls(doc, singleRoomList, innerWallRoomToExternalWallsMap);
-                if (copiedOpenings > 0)
+                // Проверяем настройки: создавать ли проемы
+                Settings settings = Settings.Load();
+                if (settings.CreateOpenings)
                 {
-                    Log(doc, $"Скопировано {copiedOpenings} окон/дверей во внешние стены.");
+                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
+                    Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы будут созданы автоматически.");
+                }
+                else
+                {
+                    Log(doc, "Создание проемов отключено в настройках. Пропускаем соединение геометрии.");
                 }
 
                 Log(doc, $"Всего создано внешних стен: {created}");

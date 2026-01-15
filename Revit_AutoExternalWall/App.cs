@@ -62,6 +62,16 @@ namespace Revit_AutoExternalWall
                     // If image not found, continue without it
                 }
 
+                // Create push button for settings command
+                PushButtonData settingsButtonData = new PushButtonData(
+                    "cmdSettings",
+                    "Настройки",
+                    assemblyPath,
+                    "Revit_AutoExternalWall.SettingsCommand");
+
+                PushButton settingsButton = panel.AddItem(settingsButtonData) as PushButton;
+                settingsButton.ToolTip = "Открыть настройки плагина";
+
                 return Result.Succeeded;
             }
             catch (Exception ex)
