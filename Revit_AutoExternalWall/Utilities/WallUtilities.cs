@@ -2099,33 +2099,81 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         bool oneInsideOneOutside = (startInside && (endOutsideLeft || endOutsideRight)) || 
                                                    (endInside && (startOutsideLeft || startOutsideRight));
                         
-                        if (passesThrough || oneInsideOneOutside)
+                        // Для внутренних углов П-образной комнаты: если оба конца внутри, но стена проходит
+                        // через большую часть ширины существующей стены (более 70%), это П-образная форма
+                        // Также проверяем, находится ли стена близко к обоим концам существующей стены
+                        bool bothInsideButPassesThrough = false;
+                        if (startInside && endInside)
                         {
-                            // П-образная форма - обрезаем до концов существующей стены
-                            // Обрезаем до ближайшего конца существующей стены
-                            if (startInside)
+                            double span = Math.Abs(tEnd - tStart);
+                            double coverageRatio = span / existingLength;
+                            // Если стена покрывает большую часть существующей стены, это П-образная форма
+                            if (coverageRatio > 0.7)
                             {
-                                // Начало внутри - обрезаем до ближайшего конца
-                                double distToStart = Math.Abs(paramExistingStart - minParam);
-                                double distToEnd = Math.Abs(paramExistingEnd - minParam);
-                                double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
+                                bothInsideButPassesThrough = true;
+                            }
+                            else
+                            {
+                                // Проверяем, находится ли стена близко к обоим концам существующей стены
+                                double distToStart1 = Math.Abs(tStart - 0.0);
+                                double distToStart2 = Math.Abs(tEnd - 0.0);
+                                double distToEnd1 = Math.Abs(tStart - existingLength);
+                                double distToEnd2 = Math.Abs(tEnd - existingLength);
                                 
-                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
+                                double minDistToStart = Math.Min(distToStart1, distToStart2);
+                                double minDistToEnd = Math.Min(distToEnd1, distToEnd2);
+                                
+                                // Если стена находится близко к обоим концам (в пределах 20% от длины стены), это П-образная форма
+                                double threshold = existingLength * 0.2;
+                                if (minDistToStart < threshold && minDistToEnd < threshold)
                                 {
-                                    minParam = nearestBoundary;
+                                    bothInsideButPassesThrough = true;
                                 }
                             }
-                            
-                            if (endInside)
+                        }
+                        
+                        if (passesThrough || oneInsideOneOutside || bothInsideButPassesThrough)
+                        {
+                            // П-образная форма - обрезаем до концов существующей стены
+                            if (bothInsideButPassesThrough)
                             {
-                                // Конец внутри - обрезаем до ближайшего конца
-                                double distToStart = Math.Abs(paramExistingStart - maxParam);
-                                double distToEnd = Math.Abs(paramExistingEnd - maxParam);
-                                double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
-                                
-                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
+                                // Оба конца внутри, но стена проходит через всю ширину - обрезаем до обоих концов
+                                if (paramExistingStart > minParam && paramExistingStart < maxParam)
                                 {
-                                    maxParam = nearestBoundary;
+                                    minParam = Math.Max(minParam, paramExistingStart);
+                                }
+                                if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
+                                {
+                                    maxParam = Math.Min(maxParam, paramExistingEnd);
+                                }
+                            }
+                            else
+                            {
+                                // Обрезаем до ближайшего конца существующей стены
+                                if (startInside)
+                                {
+                                    // Начало внутри - обрезаем до ближайшего конца
+                                    double distToStart = Math.Abs(paramExistingStart - minParam);
+                                    double distToEnd = Math.Abs(paramExistingEnd - minParam);
+                                    double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
+                                    
+                                    if (nearestBoundary > minParam && nearestBoundary < maxParam)
+                                    {
+                                        minParam = nearestBoundary;
+                                    }
+                                }
+                                
+                                if (endInside)
+                                {
+                                    // Конец внутри - обрезаем до ближайшего конца
+                                    double distToStart = Math.Abs(paramExistingStart - maxParam);
+                                    double distToEnd = Math.Abs(paramExistingEnd - maxParam);
+                                    double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
+                                    
+                                    if (nearestBoundary > minParam && nearestBoundary < maxParam)
+                                    {
+                                        maxParam = nearestBoundary;
+                                    }
                                 }
                             }
                         }
