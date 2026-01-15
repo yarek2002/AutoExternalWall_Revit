@@ -2370,8 +2370,9 @@ private static Curve ExtendCurveToJoinedWalls(
             int created = 0;
             // Словарь соответствия внутренних и внешних стен для создания проемов
             // Ключ: Tuple<ElementId внутренней стены, ElementId помещения>
-            Dictionary<Tuple<ElementId, ElementId>, Wall> innerWallRoomToExternalWallMap = 
-                new Dictionary<Tuple<ElementId, ElementId>, Wall>();
+            // Значение: Список внешних стен (может быть несколько, если стена разделена на сегменты)
+            Dictionary<Tuple<ElementId, ElementId>, List<Wall>> innerWallRoomToExternalWallsMap = 
+                new Dictionary<Tuple<ElementId, ElementId>, List<Wall>>();
 
             try
             {
@@ -2582,9 +2583,14 @@ private static Curve ExtendCurveToJoinedWalls(
                             createdWallIds.Add(externalWall.Id);
                             // Сохраняем соответствие между внутренней и внешней стеной с привязкой к помещению
                             // Это важно, когда одна внутренняя стена используется несколькими помещениями
+                            // Может быть несколько внешних стен для одной пары (стена, помещение), если стена разделена на сегменты
                             Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(innerWall.Id, segment.Room.Id);
-                            innerWallRoomToExternalWallMap[key] = externalWall;
-                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id} помещения {segment.Room.Id}");
+                            if (!innerWallRoomToExternalWallsMap.ContainsKey(key))
+                            {
+                                innerWallRoomToExternalWallsMap[key] = new List<Wall>();
+                            }
+                            innerWallRoomToExternalWallsMap[key].Add(externalWall);
+                            Log(doc, $"Создана внешняя стена {externalWall.Id} для сегмента стены {innerWall.Id} помещения {segment.Room.Id} (всего внешних стен для этой пары: {innerWallRoomToExternalWallsMap[key].Count})");
                         }
                     }
                 }
@@ -2593,7 +2599,7 @@ private static Curve ExtendCurveToJoinedWalls(
                 int totalJoinsCreated = 0;
                 foreach (Room room in rooms)
                 {
-                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallMap);
+                    int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
                     totalJoinsCreated += joinsCreated;
                 }
                 Log(doc, $"Соединена геометрия для {totalJoinsCreated} пар стен. Проемы будут созданы автоматически.");
@@ -2993,7 +2999,7 @@ private static Curve ExtendCurveToJoinedWalls(
         /// Создает проемы во внешних стенах на основе окон и дверей из внутренних стен
         /// Использует подход Room Finisher: соединяет геометрию стен и позволяет проемам автоматически прорезать обе стены
         /// </summary>
-        private static int JoinGeometryBetweenWalls(Document doc, Room room, Dictionary<Tuple<ElementId, ElementId>, Wall> innerWallRoomToExternalWallMap)
+        private static int JoinGeometryBetweenWalls(Document doc, Room room, Dictionary<Tuple<ElementId, ElementId>, List<Wall>> innerWallRoomToExternalWallsMap)
         {
             int joinsCreated = 0;
             int openingsProcessed = 0;
@@ -3034,11 +3040,11 @@ private static Curve ExtendCurveToJoinedWalls(
 
                 // Сначала соединяем геометрию между внутренними и внешними стенами
                 // Обрабатываем только стены для текущего помещения
-                foreach (var kvp in innerWallRoomToExternalWallMap)
+                foreach (var kvp in innerWallRoomToExternalWallsMap)
                 {
                     ElementId innerWallId = kvp.Key.Item1;
                     ElementId roomId = kvp.Key.Item2;
-                    Wall externalWall = kvp.Value;
+                    List<Wall> externalWalls = kvp.Value; // Теперь это список стен
 
                     // Пропускаем стены, которые не относятся к текущему помещению
                     if (roomId != room.Id)
@@ -3052,9 +3058,14 @@ private static Curve ExtendCurveToJoinedWalls(
                         Log(doc, $"Внутренняя стена {innerWallId} не найдена");
                         continue;
                     }
-
-                    try
+                    
+                    Log(doc, $"Обрабатываем внутреннюю стену {innerWall.Id} для помещения {room.Id}: найдено {externalWalls.Count} внешних стен(ы)");
+                    
+                    // Соединяем геометрию со ВСЕМИ внешними стенами для этой пары (стена, помещение)
+                    foreach (Wall externalWall in externalWalls)
                     {
+                        try
+                        {
                         // Проверяем высоту внешней стены
                         double externalWallHeight = GetWallHeight(externalWall);
                         double innerWallHeight = GetWallHeight(innerWall);
@@ -3235,7 +3246,8 @@ private static Curve ExtendCurveToJoinedWalls(
                         Log(doc, $"Ошибка при соединении геометрии стен {innerWall.Id} и {externalWall.Id}: {ex.Message}");
                         Log(doc, $"StackTrace: {ex.StackTrace}");
                     }
-                }
+                    } // Конец цикла foreach (Wall externalWall in externalWalls)
+                } // Конец цикла foreach (var kvp in innerWallRoomToExternalWallsMap)
 
                 // Regenerate после соединения, чтобы проемы появились
                 doc.Regenerate();
@@ -3247,48 +3259,52 @@ private static Curve ExtendCurveToJoinedWalls(
                     Wall hostWall = opening.Host as Wall;
                     if (hostWall == null) continue;
 
-                    // Ищем внешнюю стену для этой внутренней стены и текущего помещения
+                    // Ищем внешние стены для этой внутренней стены и текущего помещения
                     Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
-                    if (innerWallRoomToExternalWallMap.TryGetValue(key, out Wall externalWall))
+                    if (innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWallsForThisPair))
                     {
-                        // Проверяем, что стены соединены
-                        if (JoinGeometryUtils.AreElementsJoined(doc, hostWall, externalWall))
+                        // Проверяем все внешние стены для этой пары
+                        foreach (Wall externalWall in externalWallsForThisPair)
                         {
-                            // Получаем геометрию окна/двери для проверки проема
-                            Options options = new Options();
-                            options.ComputeReferences = true;
-                            options.DetailLevel = ViewDetailLevel.Fine;
-                            
-                            try
+                            // Проверяем, что стены соединены
+                            if (JoinGeometryUtils.AreElementsJoined(doc, hostWall, externalWall))
                             {
-                                GeometryElement geom = opening.get_Geometry(options);
-                                if (geom != null)
+                                // Получаем геометрию окна/двери для проверки проема
+                                Options options = new Options();
+                                options.ComputeReferences = true;
+                                options.DetailLevel = ViewDetailLevel.Fine;
+                                
+                                try
                                 {
-                                    // Проверяем, есть ли void геометрия, которая должна резать стены
-                                    foreach (GeometryObject obj in geom)
+                                    GeometryElement geom = opening.get_Geometry(options);
+                                    if (geom != null)
                                     {
-                                        if (obj is GeometryInstance inst)
+                                        // Проверяем, есть ли void геометрия, которая должна резать стены
+                                        foreach (GeometryObject obj in geom)
                                         {
-                                            GeometryElement instGeom = inst.GetInstanceGeometry();
-                                            if (instGeom != null)
+                                            if (obj is GeometryInstance inst)
                                             {
-                                                foreach (GeometryObject instObj in instGeom)
+                                                GeometryElement instGeom = inst.GetInstanceGeometry();
+                                                if (instGeom != null)
                                                 {
-                                                    if (instObj is Solid solid && solid.Volume > 0)
+                                                    foreach (GeometryObject instObj in instGeom)
                                                     {
-                                                        Log(doc, $"Найдена геометрия окна/двери {opening.Id} - должна прорезать стены");
+                                                        if (instObj is Solid solid && solid.Volume > 0)
+                                                        {
+                                                            Log(doc, $"Найдена геометрия окна/двери {opening.Id} - должна прорезать стены (внешняя стена {externalWall.Id})");
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                                catch (Exception ex)
+                                {
+                                    Log(doc, $"Ошибка при проверке геометрии окна/двери {opening.Id}: {ex.Message}");
+                                }
                             }
-                            catch (Exception ex)
-                            {
-                                Log(doc, $"Ошибка при проверке геометрии окна/двери {opening.Id}: {ex.Message}");
-                            }
-                        }
+                        } // Конец цикла foreach (Wall externalWall in externalWallsForThisPair)
                     }
                 }
 
@@ -3522,9 +3538,14 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Добавляем ID созданной стены в список для исключения из проверки
                         createdWallIds.Add(externalWall.Id);
                         // Сохраняем соответствие между внутренней и внешней стеной с привязкой к помещению
+                        // Может быть несколько внешних стен для одной пары (стена, помещение), если стена разделена на сегменты
                         Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(innerWall.Id, room.Id);
-                        innerWallRoomToExternalWallMap[key] = externalWall;
-                        Log(doc, $"Создана внешняя стена {externalWall.Id} для внутренней стены {innerWall.Id} помещения {room.Id}");
+                        if (!innerWallRoomToExternalWallsMap.ContainsKey(key))
+                        {
+                            innerWallRoomToExternalWallsMap[key] = new List<Wall>();
+                        }
+                        innerWallRoomToExternalWallsMap[key].Add(externalWall);
+                        Log(doc, $"Создана внешняя стена {externalWall.Id} для внутренней стены {innerWall.Id} помещения {room.Id} (всего внешних стен для этой пары: {innerWallRoomToExternalWallsMap[key].Count})");
                     }
                     else
                     {
@@ -3533,7 +3554,7 @@ private static Curve ExtendCurveToJoinedWalls(
                 }
 
                 // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
-                int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallMap);
+                int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
                 Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы будут созданы автоматически.");
 
                 Log(doc, $"Всего создано внешних стен: {created}");
