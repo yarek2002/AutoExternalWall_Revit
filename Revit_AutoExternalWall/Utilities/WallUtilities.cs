@@ -2073,7 +2073,6 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         
                         // Вычисляем смещение до внешней границы существующей стены
                         double offsetToExterior = (side > 0) ? existingHalfThickness : -existingHalfThickness;
-                        double paramExteriorBoundary = paramIntersection + offsetToExterior;
                         
                         // Для перпендикулярных стен обрезаем до внешней грани существующей стены
                         // Учитываем толщину стены - обрезаем на расстоянии halfThickness от оси
@@ -2081,14 +2080,8 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         double paramExistingStart = (existingStart - start).DotProduct(dir);
                         double paramExistingEnd = (existingEnd - start).DotProduct(dir);
                         
-                        // Определяем, с какой стороны находится наша стена относительно существующей
-                        // Используем точку пересечения осей для определения стороны
-                        XYZ fromIntersectionToOur = (start - intersectionPoint);
-                        double side = fromIntersectionToOur.DotProduct(existingNormal);
-                        
                         // Вычисляем параметры внешней грани существующей стены на нашей оси
                         // Внешняя грань находится на расстоянии halfThickness от оси
-                        double offsetToExterior = (side > 0) ? existingHalfThickness : -existingHalfThickness;
                         double paramExteriorStart = paramExistingStart + offsetToExterior;
                         double paramExteriorEnd = paramExistingEnd + offsetToExterior;
                         
