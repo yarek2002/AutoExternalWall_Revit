@@ -3004,6 +3004,9 @@ private static Curve ExtendCurveToJoinedWalls(
                     Log(doc, $"Найдено окон и дверей в помещении {room.Id}: {openings.Count}");
                 }
 
+                // Важно: Regenerate перед соединением геометрии, чтобы убедиться, что стены полностью созданы
+                doc.Regenerate();
+
                 // Соединяем геометрию между внутренними и внешними стенами
                 foreach (var kvp in innerWallToExternalWallMap)
                 {
@@ -3011,7 +3014,11 @@ private static Curve ExtendCurveToJoinedWalls(
                     Wall externalWall = kvp.Value;
 
                     Wall innerWall = doc.GetElement(innerWallId) as Wall;
-                    if (innerWall == null) continue;
+                    if (innerWall == null)
+                    {
+                        Log(doc, $"Внутренняя стена {innerWallId} не найдена");
+                        continue;
+                    }
 
                     try
                     {
@@ -3022,25 +3029,83 @@ private static Curve ExtendCurveToJoinedWalls(
                             continue;
                         }
 
+                        // Проверяем, пересекаются ли стены геометрически
+                        // Join Geometry работает только если стены пересекаются или находятся очень близко
+                        LocationCurve innerLocation = innerWall.Location as LocationCurve;
+                        LocationCurve externalLocation = externalWall.Location as LocationCurve;
+                        
+                        if (innerLocation == null || externalLocation == null)
+                        {
+                            Log(doc, $"Не удалось получить LocationCurve для стен {innerWall.Id} или {externalWall.Id}");
+                            continue;
+                        }
+
+                        Curve innerCurve = innerLocation.Curve;
+                        Curve externalCurve = externalLocation.Curve;
+                        
+                        if (innerCurve == null || externalCurve == null)
+                        {
+                            Log(doc, $"Не удалось получить кривые для стен {innerWall.Id} или {externalWall.Id}");
+                            continue;
+                        }
+
+                        // Проверяем расстояние между стенами
+                        double minDistance = double.MaxValue;
+                        for (int i = 0; i <= 10; i++)
+                        {
+                            double param = i / 10.0;
+                            XYZ innerPoint = innerCurve.Evaluate(param, true);
+                            double dist = externalCurve.Distance(innerPoint);
+                            if (dist < minDistance)
+                                minDistance = dist;
+                        }
+
+                        // Если стены слишком далеко друг от друга, Join Geometry может не сработать
+                        // Но попробуем все равно - возможно, стены пересекаются по высоте
+                        if (minDistance > 1.0) // больше 1 фута (~30 см)
+                        {
+                            Log(doc, $"Стены {innerWall.Id} и {externalWall.Id} находятся далеко друг от друга (мин. расстояние: {minDistance:F3}), но попробуем соединить");
+                        }
+
                         // Соединяем геометрию между внутренней и внешней стеной
+                        // Важно: порядок параметров - сначала элемент, который будет "резать", затем элемент, который будет "резаться"
+                        // В нашем случае внутренняя стена с окнами/дверями должна резать внешнюю
                         JoinGeometryUtils.JoinGeometry(doc, innerWall, externalWall);
-                        joinsCreated++;
-                        Log(doc, $"Соединена геометрия между внутренней стеной {innerWall.Id} и внешней стеной {externalWall.Id}");
+                        
+                        // Проверяем, что соединение прошло успешно
+                        if (JoinGeometryUtils.AreElementsJoined(doc, innerWall, externalWall))
+                        {
+                            joinsCreated++;
+                            Log(doc, $"Успешно соединена геометрия между внутренней стеной {innerWall.Id} и внешней стеной {externalWall.Id}");
+                        }
+                        else
+                        {
+                            Log(doc, $"Не удалось соединить геометрию стен {innerWall.Id} и {externalWall.Id} - возможно, стены не пересекаются");
+                        }
                     }
                     catch (Exception ex)
                     {
                         Log(doc, $"Ошибка при соединении геометрии стен {innerWall.Id} и {externalWall.Id}: {ex.Message}");
+                        Log(doc, $"StackTrace: {ex.StackTrace}");
                     }
                 }
 
+                // Regenerate после соединения, чтобы проемы появились
+                doc.Regenerate();
+
                 if (joinsCreated > 0 && openings.Count > 0)
                 {
-                    Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы из {openings.Count} окон/дверей будут автоматически прорезать внешние стены.");
+                    Log(doc, $"Соединена геометрия для {joinsCreated} пар стен. Проемы из {openings.Count} окон/дверей должны автоматически прорезать внешние стены.");
+                }
+                else if (joinsCreated == 0 && openings.Count > 0)
+                {
+                    Log(doc, $"ВНИМАНИЕ: Не удалось соединить геометрию стен, но найдено {openings.Count} окон/дверей. Проемы могут не создаться автоматически.");
                 }
             }
             catch (Exception ex)
             {
                 Log(doc, $"Ошибка при соединении геометрии стен: {ex.Message}");
+                Log(doc, $"StackTrace: {ex.StackTrace}");
             }
 
             return joinsCreated;
@@ -3247,8 +3312,8 @@ private static Curve ExtendCurveToJoinedWalls(
 
                     if (externalWall != null)
                     {
-                        // Отключаем соединения стен, чтобы углы оставались открытыми
-                        DisableWallJoins(externalWall);
+                        // НЕ отключаем соединения стен здесь - это может помешать Join Geometry
+                        // DisableWallJoins будет вызван после соединения геометрии, если нужно
                         // Копируем свойства из внутренней стены
                         CopyWallProperties(innerWall, externalWall);
                         created++;
