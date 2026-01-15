@@ -3061,11 +3061,48 @@ private static Curve ExtendCurveToJoinedWalls(
                         {
                             Log(doc, $"Стены {innerWall.Id} и {externalWall.Id} уже соединены");
                             joinsCreated++;
+                            
+                            // Проверяем окна/двери в уже соединенной стене
+                            foreach (FamilyInstance opening in openings)
+                            {
+                                Wall hostWall = opening.Host as Wall;
+                                if (hostWall != null && hostWall.Id == innerWall.Id)
+                                {
+                                    openingsProcessed++;
+                                    Log(doc, $"  → Окно/дверь {opening.Id} в уже соединенной стене {innerWall.Id}");
+                                }
+                            }
                             continue;
                         }
 
+                        // Детальная диагностика: проверяем расстояние между стенами
+                        LocationCurve innerLocation = innerWall.Location as LocationCurve;
+                        LocationCurve externalLocation = externalWall.Location as LocationCurve;
+                        
+                        double minDist = double.MaxValue;
+                        double maxDist = 0;
+                        if (innerLocation != null && externalLocation != null)
+                        {
+                            Curve innerCurve = innerLocation.Curve;
+                            Curve externalCurve = externalLocation.Curve;
+                            
+                            if (innerCurve != null && externalCurve != null)
+                            {
+                                // Проверяем расстояние в нескольких точках
+                                for (int i = 0; i <= 10; i++)
+                                {
+                                    double param = i / 10.0;
+                                    XYZ innerPoint = innerCurve.Evaluate(param, true);
+                                    double dist = externalCurve.Distance(innerPoint);
+                                    if (dist < minDist) minDist = dist;
+                                    if (dist > maxDist) maxDist = dist;
+                                }
+                                
+                                Log(doc, $"Расстояние между стенами {innerWall.Id} и {externalWall.Id}: мин={minDist:F3}, макс={maxDist:F3}");
+                            }
+                        }
+
                         // Проверяем, пересекаются ли стены в 3D пространстве
-                        // Для этого проверяем их bounding boxes
                         BoundingBoxXYZ innerBbox = innerWall.get_BoundingBox(null);
                         BoundingBoxXYZ externalBbox = externalWall.get_BoundingBox(null);
                         
@@ -3081,14 +3118,26 @@ private static Curve ExtendCurveToJoinedWalls(
                             
                             if (!wallsIntersect)
                             {
-                                Log(doc, $"ВНИМАНИЕ: Стены {innerWall.Id} и {externalWall.Id} не пересекаются в 3D пространстве. " +
+                                Log(doc, $"⚠ Стены {innerWall.Id} и {externalWall.Id} НЕ пересекаются в 3D! " +
                                     $"Join Geometry может не сработать.");
+                            }
+                            else
+                            {
+                                Log(doc, $"✓ Стены {innerWall.Id} и {externalWall.Id} пересекаются в 3D");
                             }
                         }
 
                         // Соединяем геометрию между внутренней и внешней стеной
                         // Порядок важен: сначала стена с окнами/дверями (innerWall), затем стена, которая будет резаться (externalWall)
-                        JoinGeometryUtils.JoinGeometry(doc, innerWall, externalWall);
+                        try
+                        {
+                            JoinGeometryUtils.JoinGeometry(doc, innerWall, externalWall);
+                        }
+                        catch (Exception joinEx)
+                        {
+                            Log(doc, $"✗ Исключение при JoinGeometry для стен {innerWall.Id} и {externalWall.Id}: {joinEx.Message}");
+                            continue;
+                        }
                         
                         // Regenerate сразу после соединения для этой пары стен
                         doc.Regenerate();
@@ -3097,22 +3146,58 @@ private static Curve ExtendCurveToJoinedWalls(
                         if (JoinGeometryUtils.AreElementsJoined(doc, innerWall, externalWall))
                         {
                             joinsCreated++;
-                            Log(doc, $"Успешно соединена геометрия между внутренней стеной {innerWall.Id} и внешней стеной {externalWall.Id}");
+                            Log(doc, $"✓ Успешно соединена геометрия между внутренней стеной {innerWall.Id} и внешней стеной {externalWall.Id}");
                             
-                            // Проверяем, есть ли окна/двери в этой внутренней стене
+                            // Проверяем окна/двери в этой стене и их пересечение с внешней стеной
+                            int openingsInThisWall = 0;
                             foreach (FamilyInstance opening in openings)
                             {
                                 Wall hostWall = opening.Host as Wall;
                                 if (hostWall != null && hostWall.Id == innerWall.Id)
                                 {
+                                    openingsInThisWall++;
                                     openingsProcessed++;
-                                    Log(doc, $"Окно/дверь {opening.Id} находится в соединенной стене {innerWall.Id}");
+                                    
+                                    // Проверяем, пересекается ли окно/дверь с внешней стеной по высоте
+                                    BoundingBoxXYZ openingBbox = opening.get_BoundingBox(null);
+                                    BoundingBoxXYZ externalBbox2 = externalWall.get_BoundingBox(null);
+                                    
+                                    if (openingBbox != null && externalBbox2 != null)
+                                    {
+                                        bool zOverlap = openingBbox.Max.Z >= externalBbox2.Min.Z && openingBbox.Min.Z <= externalBbox2.Max.Z;
+                                        
+                                        if (zOverlap)
+                                        {
+                                            Log(doc, $"  → Окно/дверь {opening.Id} должно прорезать внешнюю стену {externalWall.Id} " +
+                                                $"(высота окна: {openingBbox.Min.Z:F3}-{openingBbox.Max.Z:F3}, " +
+                                                $"высота стены: {externalBbox2.Min.Z:F3}-{externalBbox2.Max.Z:F3})");
+                                        }
+                                        else
+                                        {
+                                            Log(doc, $"  ⚠ Окно/дверь {opening.Id} НЕ пересекается с внешней стеной {externalWall.Id} по высоте! " +
+                                                $"Окно: {openingBbox.Min.Z:F3}-{openingBbox.Max.Z:F3}, " +
+                                                $"Стена: {externalBbox2.Min.Z:F3}-{externalBbox2.Max.Z:F3}");
+                                        }
+                                    }
                                 }
+                            }
+                            
+                            if (openingsInThisWall == 0)
+                            {
+                                Log(doc, $"  → В стене {innerWall.Id} нет окон/дверей");
                             }
                         }
                         else
                         {
-                            Log(doc, $"Не удалось соединить геометрию стен {innerWall.Id} и {externalWall.Id}");
+                            Log(doc, $"✗ Не удалось соединить геометрию стен {innerWall.Id} и {externalWall.Id}");
+                            if (minDist > 0.5)
+                            {
+                                Log(doc, $"  Возможная причина: стены слишком далеко друг от друга (мин. расстояние: {minDist:F3})");
+                            }
+                            if (!wallsIntersect)
+                            {
+                                Log(doc, $"  Возможная причина: стены не пересекаются в 3D пространстве");
+                            }
                         }
                     }
                     catch (Exception ex)
