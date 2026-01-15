@@ -2082,146 +2082,61 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                     double paramExteriorStart = paramExistingStart + offsetToExterior;
                     double paramExteriorEnd = paramExistingEnd + offsetToExterior;
                     
-                    // Для перпендикулярных стен всегда обрезаем, если хотя бы один конец попадает в границы
+                    // Для перпендикулярных стен всегда обрезаем до внешней грани существующей стены
+                    // Единый подход для Г-образных и П-образных комнат
                     if (startInside || endInside)
                     {
-                        // Проверяем, проходит ли наша стена через всю ширину существующей стены
-                        // Если оба конца нашей стены находятся за пределами существующей стены с разных сторон,
-                        // это П-образная форма - обрезаем до концов существующей стены
-                        bool startOutsideLeft = (tStart < -0.1);
-                        bool startOutsideRight = (tStart > existingLength + 0.1);
-                        bool endOutsideLeft = (tEnd < -0.1);
-                        bool endOutsideRight = (tEnd > existingLength + 0.1);
-                        
-                        bool passesThrough = (startOutsideLeft && endOutsideRight) || (startOutsideRight && endOutsideLeft);
-                        
-                        // Также проверяем, если один конец внутри, а другой снаружи - это тоже может быть П-образная форма
-                        bool oneInsideOneOutside = (startInside && (endOutsideLeft || endOutsideRight)) || 
-                                                   (endInside && (startOutsideLeft || startOutsideRight));
-                        
-                        // Для внутренних углов П-образной комнаты: если оба конца внутри существующей стены,
-                        // это внутренний угол П-образной комнаты - всегда обрезаем до концов
-                        bool bothInsideButPassesThrough = false;
+                        // Обрезаем до внешней грани существующей стены
                         if (startInside && endInside)
                         {
-                            // Упрощенная проверка: если оба конца внутри, это внутренний угол П-образной комнаты
-                            bothInsideButPassesThrough = true;
-                        }
-                        
-                        if (passesThrough || oneInsideOneOutside)
-                        {
-                            // П-образная форма - обрезаем до концов существующей стены
-                            // Обрезаем до ближайшего конца существующей стены
-                            if (startInside)
-                            {
-                                // Начало внутри - обрезаем до ближайшего конца
-                                double distToStart = Math.Abs(paramExistingStart - minParam);
-                                double distToEnd = Math.Abs(paramExistingEnd - minParam);
-                                double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
-                                
-                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
-                                {
-                                    minParam = nearestBoundary;
-                                }
-                            }
+                            // Оба конца входят - обрезаем до внешней грани с той стороны, которая ближе
+                            double distToStartMin = Math.Abs(paramExteriorStart - minParam);
+                            double distToEndMin = Math.Abs(paramExteriorEnd - minParam);
+                            double distToStartMax = Math.Abs(paramExteriorStart - maxParam);
+                            double distToEndMax = Math.Abs(paramExteriorEnd - maxParam);
                             
-                            if (endInside)
-                            {
-                                // Конец внутри - обрезаем до ближайшего конца
-                                double distToStart = Math.Abs(paramExistingStart - maxParam);
-                                double distToEnd = Math.Abs(paramExistingEnd - maxParam);
-                                double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
-                                
-                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
-                                {
-                                    maxParam = nearestBoundary;
-                                }
-                            }
-                        }
-                        else if (bothInsideButPassesThrough)
-                        {
-                            // Внутренний угол П-образной комнаты: оба конца внутри существующей стены
-                            // Обрезаем до обоих концов существующей стены, чтобы предотвратить протыкание
-                            // Обрезаем начало до ближайшего конца существующей стены
-                            if (startInside)
-                            {
-                                double distToStart = Math.Abs(paramExistingStart - minParam);
-                                double distToEnd = Math.Abs(paramExistingEnd - minParam);
-                                double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
-                                
-                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
-                                {
-                                    minParam = nearestBoundary;
-                                }
-                            }
+                            double minDistToMin = Math.Min(distToStartMin, distToEndMin);
+                            double minDistToMax = Math.Min(distToStartMax, distToEndMax);
                             
-                            // Обрезаем конец до ближайшего конца существующей стены
-                            if (endInside)
+                            if (minDistToMin < minDistToMax)
                             {
-                                double distToStart = Math.Abs(paramExistingStart - maxParam);
-                                double distToEnd = Math.Abs(paramExistingEnd - maxParam);
-                                double nearestBoundary = (distToStart < distToEnd) ? paramExistingStart : paramExistingEnd;
-                                
-                                if (nearestBoundary > minParam && nearestBoundary < maxParam)
-                                {
-                                    maxParam = nearestBoundary;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Г-образная форма - обрезаем до внешней грани
-                            if (startInside && endInside)
-                            {
-                                // Оба конца входят - обрезаем до внешней грани с той стороны, которая ближе
-                                double distToStartMin = Math.Abs(paramExteriorStart - minParam);
-                                double distToEndMin = Math.Abs(paramExteriorEnd - minParam);
-                                double distToStartMax = Math.Abs(paramExteriorStart - maxParam);
-                                double distToEndMax = Math.Abs(paramExteriorEnd - maxParam);
-                                
-                                double minDistToMin = Math.Min(distToStartMin, distToEndMin);
-                                double minDistToMax = Math.Min(distToStartMax, distToEndMax);
-                                
-                                if (minDistToMin < minDistToMax)
-                                {
-                                    double nearestExterior = (distToStartMin < distToEndMin) ? paramExteriorStart : paramExteriorEnd;
-                                    if (nearestExterior > minParam && nearestExterior < maxParam)
-                                    {
-                                        minParam = nearestExterior;
-                                    }
-                                }
-                                else
-                                {
-                                    double nearestExterior = (distToStartMax < distToEndMax) ? paramExteriorStart : paramExteriorEnd;
-                                    if (nearestExterior > minParam && nearestExterior < maxParam)
-                                    {
-                                        maxParam = nearestExterior;
-                                    }
-                                }
-                            }
-                            else if (startInside)
-                            {
-                                // Только начало входит - обрезаем начало до внешней грани
-                                double distToStart = Math.Abs(paramExteriorStart - minParam);
-                                double distToEnd = Math.Abs(paramExteriorEnd - minParam);
-                                double nearestExterior = (distToStart < distToEnd) ? paramExteriorStart : paramExteriorEnd;
-                                
+                                double nearestExterior = (distToStartMin < distToEndMin) ? paramExteriorStart : paramExteriorEnd;
                                 if (nearestExterior > minParam && nearestExterior < maxParam)
                                 {
                                     minParam = nearestExterior;
                                 }
                             }
-                            else if (endInside)
+                            else
                             {
-                                // Только конец входит - обрезаем конец до внешней грани
-                                double distToStart = Math.Abs(paramExteriorStart - maxParam);
-                                double distToEnd = Math.Abs(paramExteriorEnd - maxParam);
-                                double nearestExterior = (distToStart < distToEnd) ? paramExteriorStart : paramExteriorEnd;
-                                
+                                double nearestExterior = (distToStartMax < distToEndMax) ? paramExteriorStart : paramExteriorEnd;
                                 if (nearestExterior > minParam && nearestExterior < maxParam)
                                 {
                                     maxParam = nearestExterior;
                                 }
+                            }
+                        }
+                        else if (startInside)
+                        {
+                            // Только начало входит - обрезаем начало до внешней грани
+                            double distToStart = Math.Abs(paramExteriorStart - minParam);
+                            double distToEnd = Math.Abs(paramExteriorEnd - minParam);
+                            double nearestExterior = (distToStart < distToEnd) ? paramExteriorStart : paramExteriorEnd;
+                            
+                            if (nearestExterior > minParam && nearestExterior < maxParam)
+                            {
+                                minParam = nearestExterior;
+                            }
+                        }
+                        else if (endInside)
+                        {
+                            // Только конец входит - обрезаем конец до внешней грани
+                            double distToStart = Math.Abs(paramExteriorStart - maxParam);
+                            double distToEnd = Math.Abs(paramExteriorEnd - maxParam);
+                            double nearestExterior = (distToStart < distToEnd) ? paramExteriorStart : paramExteriorEnd;
+                            
+                            if (nearestExterior > minParam && nearestExterior < maxParam)
+                            {
+                                maxParam = nearestExterior;
                             }
                         }
                     }
