@@ -2099,52 +2099,33 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                         bool oneInsideOneOutside = (startInside && (endOutsideLeft || endOutsideRight)) || 
                                                    (endInside && (startOutsideLeft || startOutsideRight));
                         
-                        // Для внутренних углов П-образной комнаты: если оба конца внутри, но стена проходит
-                        // через большую часть ширины существующей стены (более 70%), это П-образная форма
-                        // Также проверяем, находится ли стена близко к обоим концам существующей стены
-                        bool bothInsideButPassesThrough = false;
+                        // Для внутренних углов П-образной комнаты: если оба конца внутри существующей стены,
+                        // всегда обрезаем до концов существующей стены, чтобы стена не входила перпендикулярно
                         if (startInside && endInside)
                         {
-                            double span = Math.Abs(tEnd - tStart);
-                            double coverageRatio = span / existingLength;
-                            // Если стена покрывает большую часть существующей стены, это П-образная форма
-                            if (coverageRatio > 0.7)
+                            // Оба конца внутри - обрезаем до обоих концов существующей стены
+                            if (paramExistingStart > minParam && paramExistingStart < maxParam)
                             {
-                                bothInsideButPassesThrough = true;
+                                minParam = paramExistingStart;
                             }
-                            else
+                            if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
                             {
-                                // Проверяем, находится ли стена близко к обоим концам существующей стены
-                                double distToStart1 = Math.Abs(tStart - 0.0);
-                                double distToStart2 = Math.Abs(tEnd - 0.0);
-                                double distToEnd1 = Math.Abs(tStart - existingLength);
-                                double distToEnd2 = Math.Abs(tEnd - existingLength);
-                                
-                                double minDistToStart = Math.Min(distToStart1, distToStart2);
-                                double minDistToEnd = Math.Min(distToEnd1, distToEnd2);
-                                
-                                // Если стена находится близко к обоим концам (в пределах 20% от длины стены), это П-образная форма
-                                double threshold = existingLength * 0.2;
-                                if (minDistToStart < threshold && minDistToEnd < threshold)
-                                {
-                                    bothInsideButPassesThrough = true;
-                                }
+                                maxParam = paramExistingEnd;
                             }
                         }
-                        
-                        if (passesThrough || oneInsideOneOutside || bothInsideButPassesThrough)
+                        else if (passesThrough || oneInsideOneOutside)
                         {
                             // П-образная форма - обрезаем до концов существующей стены
-                            if (bothInsideButPassesThrough)
+                            if (passesThrough)
                             {
-                                // Оба конца внутри, но стена проходит через всю ширину - обрезаем до обоих концов
+                                // Стена проходит через всю ширину - обрезаем до обоих концов
                                 if (paramExistingStart > minParam && paramExistingStart < maxParam)
                                 {
-                                    minParam = Math.Max(minParam, paramExistingStart);
+                                    minParam = paramExistingStart;
                                 }
                                 if (paramExistingEnd > minParam && paramExistingEnd < maxParam)
                                 {
-                                    maxParam = Math.Min(maxParam, paramExistingEnd);
+                                    maxParam = paramExistingEnd;
                                 }
                             }
                             else
