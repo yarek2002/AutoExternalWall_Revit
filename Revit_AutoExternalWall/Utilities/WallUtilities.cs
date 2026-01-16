@@ -3557,39 +3557,65 @@ private static Curve ExtendCurveToJoinedWalls(
                                     // Окно/дверь размещено по точке
                                     XYZ point = locationPoint.Point;
                                     
-                                    // Находим параметр точки на внутренней стене и нормализуем его (0-1)
+                                    // Находим параметр точки на внутренней стене
                                     try
                                     {
                                         double innerParam = innerCurve.Project(point).Parameter;
                                         
-                                        // Нормализуем параметр (приводим к диапазону 0-1)
+                                        // Для Line кривых параметр уже нормализован (0-1)
+                                        // Для других кривых нужно нормализовать
                                         double normalizedParam = 0.0;
-                                        if (innerCurve is Line innerLine)
+                                        if (innerCurve is Line)
                                         {
-                                            normalizedParam = innerParam / innerLine.Length;
+                                            // Для Line параметр уже от 0 до 1
+                                            normalizedParam = Math.Max(0.0, Math.Min(1.0, innerParam));
                                         }
                                         else
                                         {
-                                            // Для нелинейных кривых используем параметр напрямую
-                                            // Но ограничиваем его диапазоном [0, 1]
-                                            double innerLength = innerCurve.GetEndParameter(1) - innerCurve.GetEndParameter(0);
-                                            normalizedParam = (innerParam - innerCurve.GetEndParameter(0)) / innerLength;
-                                            normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                            // Для нелинейных кривых нормализуем параметр
+                                            try
+                                            {
+                                                double innerStart = innerCurve.GetEndParameter(0);
+                                                double innerEnd = innerCurve.GetEndParameter(1);
+                                                double innerLength = innerEnd - innerStart;
+                                                if (innerLength > 0.0001)
+                                                {
+                                                    normalizedParam = (innerParam - innerStart) / innerLength;
+                                                    normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                                }
+                                                else
+                                                {
+                                                    normalizedParam = 0.5; // Если длина слишком мала, используем середину
+                                                }
+                                            }
+                                            catch
+                                            {
+                                                // Если не удалось получить параметры, используем параметр напрямую
+                                                normalizedParam = Math.Max(0.0, Math.Min(1.0, innerParam));
+                                            }
                                         }
                                         
                                         // Применяем нормализованный параметр к внешней стене
-                                        if (externalCurve is Line externalLine)
+                                        if (externalCurve is Line)
                                         {
-                                            double externalParam = normalizedParam * externalLine.Length;
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            // Для Line параметр уже нормализован (0-1)
+                                            insertionPoint = externalCurve.Evaluate(normalizedParam, true);
                                         }
                                         else
                                         {
                                             // Для нелинейных кривых
-                                            double externalStart = externalCurve.GetEndParameter(0);
-                                            double externalEnd = externalCurve.GetEndParameter(1);
-                                            double externalParam = externalStart + normalizedParam * (externalEnd - externalStart);
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            try
+                                            {
+                                                double externalStart = externalCurve.GetEndParameter(0);
+                                                double externalEnd = externalCurve.GetEndParameter(1);
+                                                double externalParam = externalStart + normalizedParam * (externalEnd - externalStart);
+                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            }
+                                            catch
+                                            {
+                                                // Если не удалось, используем параметр напрямую
+                                                insertionPoint = externalCurve.Evaluate(normalizedParam, true);
+                                            }
                                         }
                                     }
                                     catch
@@ -3609,18 +3635,8 @@ private static Curve ExtendCurveToJoinedWalls(
                                             }
                                         }
                                         // Используем нормализованный параметр на внешней стене
-                                        if (externalCurve is Line externalLine)
-                                        {
-                                            double externalParam = bestNormalizedParam * externalLine.Length;
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                        }
-                                        else
-                                        {
-                                            double externalStart = externalCurve.GetEndParameter(0);
-                                            double externalEnd = externalCurve.GetEndParameter(1);
-                                            double externalParam = externalStart + bestNormalizedParam * (externalEnd - externalStart);
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                        }
+                                        // bestNormalizedParam уже в диапазоне 0-1
+                                        insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
                                     }
                                 }
                                 else if (locationCurve != null)
@@ -3632,36 +3648,65 @@ private static Curve ExtendCurveToJoinedWalls(
                                         // Получаем среднюю точку кривой окна/двери
                                         XYZ midPoint = openingCurve.Evaluate(0.5, true);
                                         
-                                        // Находим параметр этой точки на внутренней стене и нормализуем его
+                                        // Находим параметр этой точки на внутренней стене
                                         try
                                         {
                                             double innerParam = innerCurve.Project(midPoint).Parameter;
                                             
-                                            // Нормализуем параметр (приводим к диапазону 0-1)
+                                            // Для Line кривых параметр уже нормализован (0-1)
+                                            // Для других кривых нужно нормализовать
                                             double normalizedParam = 0.0;
-                                            if (innerCurve is Line innerLine)
+                                            if (innerCurve is Line)
                                             {
-                                                normalizedParam = innerParam / innerLine.Length;
+                                                // Для Line параметр уже от 0 до 1
+                                                normalizedParam = Math.Max(0.0, Math.Min(1.0, innerParam));
                                             }
                                             else
                                             {
-                                                double innerLength = innerCurve.GetEndParameter(1) - innerCurve.GetEndParameter(0);
-                                                normalizedParam = (innerParam - innerCurve.GetEndParameter(0)) / innerLength;
-                                                normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                                // Для нелинейных кривых нормализуем параметр
+                                                try
+                                                {
+                                                    double innerStart = innerCurve.GetEndParameter(0);
+                                                    double innerEnd = innerCurve.GetEndParameter(1);
+                                                    double innerLength = innerEnd - innerStart;
+                                                    if (innerLength > 0.0001)
+                                                    {
+                                                        normalizedParam = (innerParam - innerStart) / innerLength;
+                                                        normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                                    }
+                                                    else
+                                                    {
+                                                        normalizedParam = 0.5; // Если длина слишком мала, используем середину
+                                                    }
+                                                }
+                                                catch
+                                                {
+                                                    // Если не удалось получить параметры, используем параметр напрямую
+                                                    normalizedParam = Math.Max(0.0, Math.Min(1.0, innerParam));
+                                                }
                                             }
                                             
                                             // Применяем нормализованный параметр к внешней стене
-                                            if (externalCurve is Line externalLine)
+                                            if (externalCurve is Line)
                                             {
-                                                double externalParam = normalizedParam * externalLine.Length;
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                                // Для Line параметр уже нормализован (0-1)
+                                                insertionPoint = externalCurve.Evaluate(normalizedParam, true);
                                             }
                                             else
                                             {
-                                                double externalStart = externalCurve.GetEndParameter(0);
-                                                double externalEnd = externalCurve.GetEndParameter(1);
-                                                double externalParam = externalStart + normalizedParam * (externalEnd - externalStart);
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                                // Для нелинейных кривых
+                                                try
+                                                {
+                                                    double externalStart = externalCurve.GetEndParameter(0);
+                                                    double externalEnd = externalCurve.GetEndParameter(1);
+                                                    double externalParam = externalStart + normalizedParam * (externalEnd - externalStart);
+                                                    insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                                }
+                                                catch
+                                                {
+                                                    // Если не удалось, используем параметр напрямую
+                                                    insertionPoint = externalCurve.Evaluate(normalizedParam, true);
+                                                }
                                             }
                                         }
                                         catch
@@ -3681,18 +3726,8 @@ private static Curve ExtendCurveToJoinedWalls(
                                                 }
                                             }
                                             // Используем нормализованный параметр на внешней стене
-                                            if (externalCurve is Line externalLine)
-                                            {
-                                                double externalParam = bestNormalizedParam * externalLine.Length;
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                            }
-                                            else
-                                            {
-                                                double externalStart = externalCurve.GetEndParameter(0);
-                                                double externalEnd = externalCurve.GetEndParameter(1);
-                                                double externalParam = externalStart + bestNormalizedParam * (externalEnd - externalStart);
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                            }
+                                            // bestNormalizedParam уже в диапазоне 0-1
+                                            insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
                                         }
                                     }
                                 }
