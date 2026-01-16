@@ -3358,9 +3358,9 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
-                // Словарь для отслеживания уже скопированных окон/дверей по внутренней стене
-                // Ключ: ElementId внутренней стены, Значение: HashSet уже скопированных окон/дверей
-                Dictionary<ElementId, HashSet<ElementId>> copiedOpeningsByWall = new Dictionary<ElementId, HashSet<ElementId>>();
+                // Словарь для отслеживания уже скопированных окон/дверей по внутренней стене и помещению
+                // Ключ: Tuple<ElementId внутренней стены, ElementId помещения>, Значение: HashSet уже скопированных окон/дверей
+                Dictionary<Tuple<ElementId, ElementId>, HashSet<ElementId>> copiedOpeningsByWallAndRoom = new Dictionary<Tuple<ElementId, ElementId>, HashSet<ElementId>>();
 
                 foreach (Room room in rooms)
                 {
@@ -3375,18 +3375,14 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Проверяем, не было ли уже скопировано это окно/дверь для этой внутренней стены в этом помещении
                         // Используем комбинацию (стена, помещение) для отслеживания, чтобы избежать дублирования
                         Tuple<ElementId, ElementId> trackingKey = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
-                        string trackingKeyStr = $"{hostWall.Id}_{room.Id}";
                         
-                        if (!copiedOpeningsByWall.ContainsKey(hostWall.Id))
+                        if (!copiedOpeningsByWallAndRoom.ContainsKey(trackingKey))
                         {
-                            copiedOpeningsByWall[hostWall.Id] = new HashSet<ElementId>();
+                            copiedOpeningsByWallAndRoom[trackingKey] = new HashSet<ElementId>();
                         }
 
                         // Проверяем, было ли это окно/дверь уже скопировано для этой стены в этом помещении
-                        // Используем ID окна/двери + ID помещения как уникальный ключ
-                        ElementId trackingOpeningId = new ElementId(opening.Id.IntegerValue + room.Id.IntegerValue * 1000000);
-                        
-                        if (copiedOpeningsByWall[hostWall.Id].Contains(trackingOpeningId))
+                        if (copiedOpeningsByWallAndRoom[trackingKey].Contains(opening.Id))
                         {
                             // Это окно/дверь уже было скопировано для этой стены в этом помещении
                             continue;
@@ -3623,7 +3619,7 @@ private static Curve ExtendCurveToJoinedWalls(
 
                         // Помечаем это окно/дверь как скопированное для этой внутренней стены в этом помещении
                         // Это предотвратит дублирование при повторной обработке того же помещения
-                        copiedOpeningsByWall[hostWall.Id].Add(trackingOpeningId);
+                        copiedOpeningsByWallAndRoom[trackingKey].Add(opening.Id);
                     }
                 }
 
