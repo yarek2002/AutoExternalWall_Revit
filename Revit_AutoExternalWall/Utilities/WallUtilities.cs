@@ -1693,25 +1693,25 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         }
 
         // Вычисляем продление с учетом угла и толщины стен
-        double sourceHalfThickness = GetWallThickness(sourceWall) / 2.0;
         double adjacentHalfThickness = GetWallThickness(adjacentWall) / 2.0;
         
-        // Для острого угла используем формулу: (halfThickness) / sin(angle/2)
-        // Это дает правильное продление до внешней грани примыкающей стены
-        double halfAngle = angle / 2.0;
-        double sinHalfAngle = Math.Sin(halfAngle);
+        // Продление оси исходной стены до внешней грани примыкающей стены
+        // Внешняя грань - это параллельное смещение оси на adjacentHalfThickness
+        // Правильная формула: extension = offset / sin(angle)
+        double sinAngle = Math.Sin(angle);
         
-        if (sinHalfAngle < 1e-6)
+        if (sinAngle < 1e-6)
         {
-            return sourceHalfThickness;
+            // Угол слишком мал или близок к 0/180 - стены почти параллельны
+            return GetWallThickness(sourceWall) / 2.0;
         }
 
-        // Продление = половина толщины исходной стены + половина толщины примыкающей стены
-        // деленное на sin половины угла
-        double extension = (sourceHalfThickness + adjacentHalfThickness) / sinHalfAngle;
+        // Продление = половина толщины примыкающей стены / sin(угла между осями)
+        double extension = adjacentHalfThickness / sinAngle;
         
         // Ограничиваем максимальное продление разумным значением
-        double maxExtension = (sourceHalfThickness + adjacentHalfThickness) * 5.0;
+        // При очень малых углах sin(angle) стремится к 0, что дает огромное продление
+        double maxExtension = adjacentHalfThickness * 50.0; // разумный предел для очень острых углов
         return Math.Min(extension, maxExtension);
     }
     catch
