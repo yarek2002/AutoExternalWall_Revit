@@ -3016,6 +3016,103 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
+        /// Проверяет, принадлежит ли окно/дверь данному помещению
+        /// Использует Room.GetRoom для определения помещения по точке окна/двери
+        /// </summary>
+        private static bool DoesOpeningBelongToRoom(Document doc, FamilyInstance opening, Room room)
+        {
+            try
+            {
+                // Получаем позицию окна/двери
+                LocationPoint locationPoint = opening.Location as LocationPoint;
+                LocationCurve locationCurve = opening.Location as LocationCurve;
+                
+                XYZ openingPoint = null;
+                if (locationPoint != null)
+                {
+                    openingPoint = locationPoint.Point;
+                }
+                else if (locationCurve != null && locationCurve.Curve != null)
+                {
+                    openingPoint = locationCurve.Curve.Evaluate(0.5, true);
+                }
+
+                if (openingPoint == null) return false;
+
+                // Используем Room.GetRoom для определения помещения по точке
+                // Пробуем сместить точку в разные стороны от стены, чтобы найти правильное помещение
+                Wall hostWall = opening.Host as Wall;
+                if (hostWall != null)
+                {
+                    LocationCurve wallLocation = hostWall.Location as LocationCurve;
+                    if (wallLocation != null && wallLocation.Curve != null)
+                    {
+                        Curve wallCurve = wallLocation.Curve;
+                        try
+                        {
+                            // Находим ближайшую точку на стене
+                            double param = wallCurve.Project(openingPoint).Parameter;
+                            XYZ pointOnWall = wallCurve.Evaluate(param, true);
+                            
+                            // Получаем направление стены
+                            XYZ wallDirection = (wallCurve.GetEndPoint(1) - wallCurve.GetEndPoint(0)).Normalize();
+                            
+                            // Получаем нормаль к стене (перпендикулярно стене)
+                            // Используем вектор, перпендикулярный стене и направлению вверх
+                            XYZ up = XYZ.BasisZ;
+                            XYZ wallNormal = wallDirection.CrossProduct(up).Normalize();
+                            
+                            // Пробуем сместить точку в обе стороны от стены
+                            // Сначала пробуем одно направление
+                            XYZ testPoint1 = pointOnWall + wallNormal * 0.5; // 0.5 фута от стены
+                            Room roomAtPoint1 = doc.GetRoomAtPoint(testPoint1);
+                            if (roomAtPoint1 != null && roomAtPoint1.Id == room.Id)
+                            {
+                                return true;
+                            }
+                            
+                            // Пробуем противоположное направление
+                            XYZ testPoint2 = pointOnWall - wallNormal * 0.5;
+                            Room roomAtPoint2 = doc.GetRoomAtPoint(testPoint2);
+                            if (roomAtPoint2 != null && roomAtPoint2.Id == room.Id)
+                            {
+                                return true;
+                            }
+                            
+                            // Если не нашли через нормаль, пробуем направление от стены к окну
+                            XYZ direction = (openingPoint - pointOnWall);
+                            if (direction.GetLength() > 0.01) // Если есть значимое смещение
+                            {
+                                direction = direction.Normalize();
+                                XYZ testPoint3 = pointOnWall + direction * 0.5;
+                                Room roomAtPoint3 = doc.GetRoomAtPoint(testPoint3);
+                                if (roomAtPoint3 != null && roomAtPoint3.Id == room.Id)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log(doc, $"Ошибка при проверке принадлежности окна/двери {opening.Id} помещению {room.Id}: {ex.Message}");
+                            // Не возвращаем true по умолчанию - это может привести к дублированию
+                        }
+                    }
+                }
+
+                // Если не удалось определить через GetRoom, возвращаем false
+                // Это предотвратит копирование окна в неправильное помещение
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // В случае ошибки возвращаем false, чтобы не копировать окно в неправильное помещение
+                Log(doc, $"Ошибка при проверке принадлежности окна/двери {opening.Id} помещению {room.Id}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Создает проемы во внешних стенах на основе окон и дверей из внутренних стен
         /// Использует подход Room Finisher: соединяет геометрию стен и позволяет проемам автоматически прорезать обе стены
         /// </summary>
@@ -3358,6 +3455,10 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
+                // Словарь для отслеживания уже скопированных окон/дверей
+                // Ключ: ElementId окна/двери, Значение: ElementId помещения, для которого оно было скопировано
+                Dictionary<ElementId, ElementId> copiedOpenings = new Dictionary<ElementId, ElementId>();
+
                 foreach (Room room in rooms)
                 {
                     // Получаем окна и двери из помещения
@@ -3368,9 +3469,34 @@ private static Curve ExtendCurveToJoinedWalls(
                         Wall hostWall = opening.Host as Wall;
                         if (hostWall == null) continue;
 
+                        // Проверяем, не было ли уже скопировано это окно/дверь
+                        // Если окно уже скопировано, пропускаем его, чтобы избежать дубликатов
+                        if (copiedOpenings.ContainsKey(opening.Id))
+                        {
+                            continue; // Уже скопировано, пропускаем
+                        }
+
+                        // Проверяем, действительно ли окно/дверь принадлежит этому помещению
+                        // Это важно, когда стена граничит с несколькими помещениями
+                        bool belongsToRoom = DoesOpeningBelongToRoom(doc, opening, room);
+                        Log(doc, $"Проверка принадлежности: окно/дверь {opening.Id} помещению {room.Id} = {belongsToRoom}");
+                        
+                        if (!belongsToRoom)
+                        {
+                            Log(doc, $"Окно/дверь {opening.Id} не принадлежит помещению {room.Id}, пропускаем");
+                            continue; // Окно/дверь не принадлежит этому помещению, пропускаем
+                        }
+                        
+                        Log(doc, $"Окно/дверь {opening.Id} принадлежит помещению {room.Id}, продолжаем копирование");
+
                         // Ищем внешние стены для этой внутренней стены и помещения
                         Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
                         if (!innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWalls))
+                        {
+                            continue;
+                        }
+
+                        if (externalWalls == null || externalWalls.Count == 0)
                         {
                             continue;
                         }
@@ -3414,13 +3540,15 @@ private static Curve ExtendCurveToJoinedWalls(
                             sillHeight = sillHeightParam.AsDouble();
                         }
 
-                        // Для каждой внешней стены создаем копию окна/двери
-                        foreach (Wall externalWall in externalWalls)
+                        // ВАЖНО: Копируем окно/дверь только в ПЕРВУЮ внешнюю стену для этой пары (стена, помещение)
+                        // Если стена разделена на сегменты, все сегменты относятся к одному помещению,
+                        // и окно должно быть скопировано только один раз
+                        Wall externalWall = externalWalls[0]; // Берем первую внешнюю стену
+
+                        try
                         {
-                            try
-                            {
-                                FamilyInstance newOpening = null;
-                                XYZ insertionPoint = null;
+                            FamilyInstance newOpening = null;
+                            XYZ insertionPoint = null;
 
                                 // Получаем кривые внутренней и внешней стен
                                 LocationCurve innerWallLocation = hostWall.Location as LocationCurve;
@@ -3533,13 +3661,19 @@ private static Curve ExtendCurveToJoinedWalls(
 
                                         copiedCount++;
                                         Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
+                                        
+                                        // Помечаем это окно/дверь как скопированное для этого помещения
+                                        // Это предотвратит дублирование, если стена граничит с несколькими помещениями
+                                        if (!copiedOpenings.ContainsKey(opening.Id))
+                                        {
+                                            copiedOpenings[opening.Id] = room.Id;
+                                        }
                                     }
                                 }
-                            }
-                            catch (Exception ex)
-                            {
-                                Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
-                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
                         }
                     }
                 }
