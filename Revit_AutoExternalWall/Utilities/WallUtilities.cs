@@ -3016,6 +3016,98 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
+        /// Проверяет, принадлежит ли окно/дверь данному помещению
+        /// Проверяет, на какой стороне стены находится окно/дверь и сравнивает с расположением помещения
+        /// </summary>
+        private static bool DoesOpeningBelongToRoom(Document doc, FamilyInstance opening, Wall hostWall, Room room)
+        {
+            try
+            {
+                // Получаем позицию окна/двери
+                LocationPoint locationPoint = opening.Location as LocationPoint;
+                LocationCurve locationCurve = opening.Location as LocationCurve;
+                
+                XYZ openingPoint = null;
+                if (locationPoint != null)
+                {
+                    openingPoint = locationPoint.Point;
+                }
+                else if (locationCurve != null && locationCurve.Curve != null)
+                {
+                    openingPoint = locationCurve.Curve.Evaluate(0.5, true);
+                }
+
+                if (openingPoint == null) return false;
+
+                // Получаем кривую стены
+                LocationCurve wallLocation = hostWall.Location as LocationCurve;
+                if (wallLocation == null || wallLocation.Curve == null) return false;
+
+                Curve wallCurve = wallLocation.Curve;
+                if (!(wallCurve is Line wallLine)) return false;
+
+                // Получаем нормаль к стене
+                XYZ wallDir = (wallLine.GetEndPoint(1) - wallLine.GetEndPoint(0)).Normalize();
+                XYZ wallNormal = new XYZ(-wallDir.Y, wallDir.X, 0.0).Normalize();
+
+                // Находим ближайшую точку на оси стены к окну/двери
+                XYZ closestPointOnWall = wallLine.Project(openingPoint).XYZPoint;
+
+                // Вектор от стены к окну/двери
+                XYZ fromWallToOpening = (openingPoint - closestPointOnWall).Normalize();
+
+                // Определяем, на какой стороне стены находится окно/дверь
+                double openingSide = wallNormal.DotProduct(fromWallToOpening);
+
+                // Получаем boundary segments помещения для этой стены
+                SpatialElementBoundaryOptions options = new SpatialElementBoundaryOptions();
+                IList<IList<BoundarySegment>> boundaryLoops = room.GetBoundarySegments(options);
+                
+                if (boundaryLoops == null) return true; // Если не можем определить, считаем что принадлежит
+
+                // Проверяем, на какой стороне стены находится помещение
+                foreach (IList<BoundarySegment> loop in boundaryLoops)
+                {
+                    foreach (BoundarySegment segment in loop)
+                    {
+                        Element boundaryElement = doc.GetElement(segment.ElementId);
+                        if (boundaryElement is Wall wall && wall.Id == hostWall.Id)
+                        {
+                            // Получаем кривую boundary segment
+                            Curve boundaryCurve = segment.GetCurve();
+                            if (boundaryCurve != null)
+                            {
+                                // Берем середину boundary segment
+                                XYZ midPoint = boundaryCurve.Evaluate(0.5, true);
+                                
+                                // Вектор от стены к помещению
+                                XYZ fromWallToRoom = (midPoint - closestPointOnWall).Normalize();
+                                
+                                // Определяем сторону помещения по скалярному произведению с нормалью
+                                double roomSide = wallNormal.DotProduct(fromWallToRoom);
+                                
+                                // Если окно/дверь и помещение находятся на одной стороне стены (с учетом допуска)
+                                if (Math.Sign(openingSide) == Math.Sign(roomSide) || Math.Abs(openingSide - roomSide) < 0.2)
+                                {
+                                    return true; // Окно/дверь принадлежит этому помещению
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Если не нашли совпадение, считаем что не принадлежит
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // В случае ошибки считаем что принадлежит (безопасный вариант)
+                Log(doc, $"Ошибка при проверке принадлежности окна/двери {opening.Id} помещению {room.Id}: {ex.Message}");
+                return true;
+            }
+        }
+
+        /// <summary>
         /// Создает проемы во внешних стенах на основе окон и дверей из внутренних стен
         /// Использует подход Room Finisher: соединяет геометрию стен и позволяет проемам автоматически прорезать обе стены
         /// </summary>
@@ -3358,9 +3450,9 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
-                // Словарь для отслеживания уже скопированных окон/дверей по внутренней стене и помещению
-                // Ключ: Tuple<ElementId внутренней стены, ElementId помещения>, Значение: HashSet уже скопированных окон/дверей
-                Dictionary<Tuple<ElementId, ElementId>, HashSet<ElementId>> copiedOpeningsByWallAndRoom = new Dictionary<Tuple<ElementId, ElementId>, HashSet<ElementId>>();
+                // Словарь для отслеживания уже скопированных окон/дверей
+                // Ключ: ElementId окна/двери, Значение: HashSet помещений, для которых оно уже было скопировано
+                Dictionary<ElementId, HashSet<ElementId>> copiedOpeningsByRoom = new Dictionary<ElementId, HashSet<ElementId>>();
 
                 foreach (Room room in rooms)
                 {
@@ -3372,31 +3464,30 @@ private static Curve ExtendCurveToJoinedWalls(
                         Wall hostWall = opening.Host as Wall;
                         if (hostWall == null) continue;
 
-                        // Проверяем, не было ли уже скопировано это окно/дверь для этой внутренней стены в этом помещении
-                        // Используем комбинацию (стена, помещение) для отслеживания, чтобы избежать дублирования
-                        Tuple<ElementId, ElementId> trackingKey = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
-                        
-                        if (!copiedOpeningsByWallAndRoom.ContainsKey(trackingKey))
+                        // Проверяем, было ли это окно/дверь уже скопировано для другого помещения
+                        // Если стена граничит с несколькими помещениями, окно может быть найдено в нескольких
+                        // Но копировать его нужно только один раз - для того помещения, которому оно реально принадлежит
+                        if (!copiedOpeningsByRoom.ContainsKey(opening.Id))
                         {
-                            copiedOpeningsByWallAndRoom[trackingKey] = new HashSet<ElementId>();
+                            copiedOpeningsByRoom[opening.Id] = new HashSet<ElementId>();
                         }
 
-                        // Проверяем, было ли это окно/дверь уже скопировано для этой стены в этом помещении
-                        if (copiedOpeningsByWallAndRoom[trackingKey].Contains(opening.Id))
+                        // Проверяем, действительно ли окно/дверь принадлежит этому помещению
+                        // Для этого проверяем, на какой стороне стены находится окно/дверь
+                        if (!DoesOpeningBelongToRoom(doc, opening, hostWall, room))
                         {
-                            // Это окно/дверь уже было скопировано для этой стены в этом помещении
-                            continue;
+                            continue; // Окно/дверь не принадлежит этому помещению, пропускаем
                         }
 
-                        // Ищем внешние стены для этой внутренней стены И этого помещения
-                        // Важно: копируем только во внешние стены того же помещения, где находится окно/дверь
+                        // Проверяем, не было ли уже скопировано это окно/дверь для этого помещения
+                        if (copiedOpeningsByRoom[opening.Id].Contains(room.Id))
+                        {
+                            continue; // Уже скопировано для этого помещения
+                        }
+
+                        // Ищем внешние стены для этой внутренней стены и помещения
                         Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
                         if (!innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWalls))
-                        {
-                            continue;
-                        }
-
-                        if (externalWalls.Count == 0)
                         {
                             continue;
                         }
@@ -3441,7 +3532,6 @@ private static Curve ExtendCurveToJoinedWalls(
                         }
 
                         // Для каждой внешней стены создаем копию окна/двери
-                        // Используем только внешние стены для этого помещения
                         foreach (Wall externalWall in externalWalls)
                         {
                             try
@@ -3470,32 +3560,16 @@ private static Curve ExtendCurveToJoinedWalls(
                                     // Находим параметр точки на внутренней стене
                                     try
                                     {
-                                        double innerParam = innerCurve.Project(point).Parameter;
+                                        double param = innerCurve.Project(point).Parameter;
                                         
-                                        // Нормализуем параметр (приводим к диапазону 0-1)
-                                        double normalizedParam = innerParam;
-                                        if (innerCurve is Line innerLine)
-                                        {
-                                            normalizedParam = innerParam / innerLine.Length;
-                                        }
-                                        
-                                        // Применяем нормализованный параметр к внешней стене
-                                        if (externalCurve is Line externalLine)
-                                        {
-                                            double externalParam = normalizedParam * externalLine.Length;
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                        }
-                                        else
-                                        {
-                                            // Для нелинейных кривых используем нормализованный параметр напрямую
-                                            insertionPoint = externalCurve.Evaluate(normalizedParam, true);
-                                        }
+                                        // Используем тот же параметр на внешней стене
+                                        insertionPoint = externalCurve.Evaluate(param, true);
                                     }
                                     catch
                                     {
                                         // Если проекция не удалась, используем ближайшую точку по расстоянию
                                         double minDist = double.MaxValue;
-                                        double bestNormalizedParam = 0.0;
+                                        double bestParam = 0.0;
                                         for (int i = 0; i <= 100; i++)
                                         {
                                             double t = i / 100.0;
@@ -3504,19 +3578,11 @@ private static Curve ExtendCurveToJoinedWalls(
                                             if (dist < minDist)
                                             {
                                                 minDist = dist;
-                                                bestNormalizedParam = t;
+                                                bestParam = t;
                                             }
                                         }
-                                        // Используем нормализованный параметр на внешней стене
-                                        if (externalCurve is Line externalLine)
-                                        {
-                                            double externalParam = bestNormalizedParam * externalLine.Length;
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                        }
-                                        else
-                                        {
-                                            insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
-                                        }
+                                        // Используем найденный параметр на внешней стене
+                                        insertionPoint = externalCurve.Evaluate(bestParam, true);
                                     }
                                 }
                                 else if (locationCurve != null)
@@ -3531,31 +3597,16 @@ private static Curve ExtendCurveToJoinedWalls(
                                         // Находим параметр этой точки на внутренней стене
                                         try
                                         {
-                                            double innerParam = innerCurve.Project(midPoint).Parameter;
+                                            double param = innerCurve.Project(midPoint).Parameter;
                                             
-                                            // Нормализуем параметр (приводим к диапазону 0-1)
-                                            double normalizedParam = innerParam;
-                                            if (innerCurve is Line innerLine)
-                                            {
-                                                normalizedParam = innerParam / innerLine.Length;
-                                            }
-                                            
-                                            // Применяем нормализованный параметр к внешней стене
-                                            if (externalCurve is Line externalLine)
-                                            {
-                                                double externalParam = normalizedParam * externalLine.Length;
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                            }
-                                            else
-                                            {
-                                                insertionPoint = externalCurve.Evaluate(normalizedParam, true);
-                                            }
+                                            // Используем тот же параметр на внешней стене
+                                            insertionPoint = externalCurve.Evaluate(param, true);
                                         }
                                         catch
                                         {
                                             // Если проекция не удалась, используем ближайшую точку
                                             double minDist = double.MaxValue;
-                                            double bestNormalizedParam = 0.0;
+                                            double bestParam = 0.0;
                                             for (int i = 0; i <= 100; i++)
                                             {
                                                 double t = i / 100.0;
@@ -3564,19 +3615,10 @@ private static Curve ExtendCurveToJoinedWalls(
                                                 if (dist < minDist)
                                                 {
                                                     minDist = dist;
-                                                    bestNormalizedParam = t;
+                                                    bestParam = t;
                                                 }
                                             }
-                                            // Используем нормализованный параметр на внешней стене
-                                            if (externalCurve is Line externalLine)
-                                            {
-                                                double externalParam = bestNormalizedParam * externalLine.Length;
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                            }
-                                            else
-                                            {
-                                                insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
-                                            }
+                                            insertionPoint = externalCurve.Evaluate(bestParam, true);
                                         }
                                     }
                                 }
@@ -3617,9 +3659,8 @@ private static Curve ExtendCurveToJoinedWalls(
                             }
                         }
 
-                        // Помечаем это окно/дверь как скопированное для этой внутренней стены в этом помещении
-                        // Это предотвратит дублирование при повторной обработке того же помещения
-                        copiedOpeningsByWallAndRoom[trackingKey].Add(opening.Id);
+                        // Помечаем это окно/дверь как скопированное для этого помещения
+                        copiedOpeningsByRoom[opening.Id].Add(room.Id);
                     }
                 }
 
@@ -3945,5 +3986,3 @@ private static Curve ExtendCurveToJoinedWalls(
 
     }
 }
-
-
