@@ -146,6 +146,10 @@ namespace Revit_AutoExternalWall.Utilities
                         // Disable wall joins by setting the "Allow Join" parameter
                         DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
+                        
+                        // Устанавливаем параметр ADSK_Зона для внешней стены
+                        SetZoneParameter(doc, externalWall, null);
+                        
                         wallsCreated++;
                     }
                 }
@@ -1147,6 +1151,10 @@ namespace Revit_AutoExternalWall.Utilities
                         // programmatically which can move the wall unexpectedly.
                         DisableWallJoins(externalWall);
                         CopyWallProperties(innerWall, externalWall);
+                        
+                        // Устанавливаем параметр ADSK_Зона для внешней стены
+                        SetZoneParameter(doc, externalWall, null);
+                        
                         createdExternalCurves.Add(trimmed);
                         created++;
                     }
@@ -1338,6 +1346,10 @@ namespace Revit_AutoExternalWall.Utilities
                 {
                     DisableWallJoins(externalWall);
                     CopyWallProperties(innerWall, externalWall);
+                    
+                    // Устанавливаем параметр ADSK_Зона для внешней стены
+                    SetZoneParameter(doc, externalWall, null);
+                    
                     existingExternalCurves?.Add(trimmed);
                 }
 
@@ -1388,6 +1400,9 @@ namespace Revit_AutoExternalWall.Utilities
                     // Не вызываем DisableWallJoins — позволяем Revit автоматически
                     // оформить пересечения в углах.
                     CopyWallProperties(innerWall, externalWall);
+                    
+                    // Устанавливаем параметр ADSK_Зона для внешней стены
+                    SetZoneParameter(doc, externalWall, null);
                 }
 
                 return externalWall;
@@ -2579,6 +2594,10 @@ private static Curve ExtendCurveToJoinedWalls(
                         {
                             DisableWallJoins(externalWall);
                             CopyWallProperties(innerWall, externalWall);
+                            
+                            // Устанавливаем параметр ADSK_Зона для внешней стены
+                            SetZoneParameter(doc, externalWall, null);
+                            
                             created++;
                             // Добавляем ID созданной стены в список для исключения из проверки
                             createdWallIds.Add(externalWall.Id);
@@ -3603,6 +3622,9 @@ private static Curve ExtendCurveToJoinedWalls(
                                     // Не копируем параметры - просто устанавливаем то же семейство и типоразмер
                                     // Остальные параметры остаются по умолчанию для нового экземпляра
 
+                                    // Устанавливаем параметр ADSK_Зона для окна/двери
+                                    SetZoneParameter(doc, newOpening, bestExternalWall);
+
                                     copiedCount++;
                                     Log(doc, $"Установлено окно/дверь {familySymbol.Name} во внешнюю стену {bestExternalWall.Id} (новый ID: {newOpening.Id}, расстояние до исходной позиции: {minDistance:F3})");
                                     
@@ -3674,6 +3696,144 @@ private static Curve ExtendCurveToJoinedWalls(
             catch (Exception ex)
             {
                 // Логируем ошибку, но не прерываем выполнение
+            }
+        }
+
+        /// <summary>
+        /// Определяет сторону света (Ю, С, В, З) по направлению нормали внешней стены
+        /// </summary>
+        private static string GetCardinalDirection(Wall wall)
+        {
+            try
+            {
+                if (wall == null)
+                    return "С";
+
+                // Получаем нормаль к внешней стороне стены
+                // Используем среднюю точку стены для более точного определения направления
+                LocationCurve locationCurve = wall.Location as LocationCurve;
+                if (locationCurve == null || locationCurve.Curve == null)
+                    return "С";
+
+                Curve curve = locationCurve.Curve;
+                XYZ midPoint = curve.Evaluate(0.5, true);
+
+                // Получаем внешнюю грань стены для более точного определения нормали
+                XYZ normal = null;
+                try
+                {
+                    var sideRefs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+                    if (sideRefs != null && sideRefs.Count > 0)
+                    {
+                        Reference firstRef = sideRefs[0];
+                        Face face = wall.Document.GetElement(firstRef)?.GetGeometryObjectFromReference(firstRef) as Face;
+                        if (face != null)
+                        {
+                            // Получаем нормаль в средней точке грани
+                            UV uv = face.Project(midPoint).UVPoint;
+                            normal = face.ComputeNormal(uv);
+                            // Проецируем на горизонтальную плоскость (XY)
+                            normal = new XYZ(normal.X, normal.Y, 0).Normalize();
+                        }
+                    }
+                }
+                catch
+                {
+                    // Если не удалось получить грань, используем метод GetWallFaceNormal
+                }
+
+                // Если не удалось получить нормаль из грани, используем упрощенный метод
+                if (normal == null || normal.GetLength() < 0.1)
+                {
+                    normal = GetWallFaceNormal(wall);
+                }
+
+                // Вычисляем азимут (угол от севера)
+                // В Revit: Y - север, X - восток
+                // atan2(X, Y) дает угол от севера по часовой стрелке
+                double azimuth = Math.Atan2(normal.X, normal.Y) * 180.0 / Math.PI;
+                
+                // Нормализуем азимут в диапазон 0-360
+                if (azimuth < 0)
+                    azimuth += 360.0;
+                
+                // Определяем сторону света:
+                // Север: 315-45 градусов -> С
+                // Восток: 45-135 градусов -> В
+                // Юг: 135-225 градусов -> Ю
+                // Запад: 225-315 градусов -> З
+                
+                if (azimuth >= 315.0 || azimuth < 45.0)
+                    return "С"; // Север
+                else if (azimuth >= 45.0 && azimuth < 135.0)
+                    return "В"; // Восток
+                else if (azimuth >= 135.0 && azimuth < 225.0)
+                    return "Ю"; // Юг
+                else // azimuth >= 225.0 && azimuth < 315.0
+                    return "З"; // Запад
+            }
+            catch
+            {
+                return "С"; // По умолчанию Север
+            }
+        }
+
+        /// <summary>
+        /// Устанавливает параметр ADSK_Зона для стены, окна или двери
+        /// </summary>
+        private static void SetZoneParameter(Document doc, Element element, Wall hostWall)
+        {
+            try
+            {
+                if (element == null)
+                    return;
+
+                // Определяем сторону света
+                // Для окон и дверей используем направление стены-хозяина
+                Wall wallToUse = hostWall ?? (element as Wall);
+                if (wallToUse == null)
+                    return;
+
+                string direction = GetCardinalDirection(wallToUse);
+                
+                // Ищем параметр ADSK_Зона
+                Parameter zoneParam = element.LookupParameter("ADSK_Зона");
+                if (zoneParam == null)
+                {
+                    // Пробуем альтернативные варианты названия
+                    foreach (Parameter param in element.Parameters)
+                    {
+                        if (param.Definition != null && 
+                            (param.Definition.Name == "ADSK_Зона" ||
+                             param.Definition.Name.Contains("Зона") || 
+                             param.Definition.Name.Contains("Zone")))
+                        {
+                            zoneParam = param;
+                            break;
+                        }
+                    }
+                }
+
+                if (zoneParam != null && !zoneParam.IsReadOnly)
+                {
+                    if (zoneParam.StorageType == StorageType.String)
+                    {
+                        zoneParam.Set(direction);
+                        Log(doc, $"Установлен параметр ADSK_Зона = {direction} для элемента {element.Id} (тип: {element.GetType().Name})");
+                    }
+                    else
+                    {
+                        Log(doc, $"Параметр ADSK_Зона найден, но имеет неподдерживаемый тип хранения {zoneParam.StorageType} для элемента {element.Id}");
+                    }
+                }
+                else
+                {
+                    Log(doc, $"Параметр ADSK_Зона не найден или только для чтения для элемента {element.Id} (тип: {element.GetType().Name})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(doc, $"Ошибка при установке параметра ADSK_Зона для элемента {element?.Id}: {ex.Message}");
             }
         }
 
@@ -3885,6 +4045,10 @@ private static Curve ExtendCurveToJoinedWalls(
                         // DisableWallJoins будет вызван после соединения геометрии, если нужно
                         // Копируем свойства из внутренней стены
                         CopyWallProperties(innerWall, externalWall);
+                        
+                        // Устанавливаем параметр ADSK_Зона для внешней стены
+                        SetZoneParameter(doc, externalWall, null);
+                        
                         created++;
                         // Добавляем ID созданной стены в список для исключения из проверки
                         createdWallIds.Add(externalWall.Id);
