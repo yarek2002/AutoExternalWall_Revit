@@ -3619,12 +3619,12 @@ private static Curve ExtendCurveToJoinedWalls(
                                         }
                                         
                                         // Применяем нормализованный параметр к внешней стене
-                                        if (externalCurve is Line externalLine)
+                                        // Для Line кривых Evaluate() принимает нормализованный параметр (0-1), а не параметр в единицах длины
+                                        if (externalCurve is Line)
                                         {
-                                            // Для Line применяем нормализованный параметр (0-1) к длине
-                                            double externalParam = normalizedParam * externalLine.Length;
-                                            Log(doc, $"Внешняя стена {externalWall.Id} (Line): длина {externalLine.Length:F3}, параметр {externalParam:F3}");
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            // Для Line используем нормализованный параметр напрямую (0-1)
+                                            Log(doc, $"Внешняя стена {externalWall.Id} (Line): нормализованный параметр {normalizedParam:F3}");
+                                            insertionPoint = externalCurve.Evaluate(normalizedParam, true);
                                             Log(doc, $"Точка вставки вычислена: ({insertionPoint.X:F3}, {insertionPoint.Y:F3}, {insertionPoint.Z:F3})");
                                         }
                                         else
@@ -3684,15 +3684,8 @@ private static Curve ExtendCurveToJoinedWalls(
                                         }
                                         
                                         // Используем нормализованный параметр на внешней стене
-                                        if (externalCurve is Line externalLine)
-                                        {
-                                            double externalParam = bestNormalizedParam * externalLine.Length;
-                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                        }
-                                        else
-                                        {
-                                            insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
-                                        }
+                                        // Для Line кривых Evaluate() принимает нормализованный параметр (0-1)
+                                        insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
                                         
                                         Log(doc, $"Использован fallback метод для окна/двери {opening.Id}, нормализованный параметр: {bestNormalizedParam:F3}");
                                     }
@@ -3755,11 +3748,11 @@ private static Curve ExtendCurveToJoinedWalls(
                                             }
                                             
                                             // Применяем нормализованный параметр к внешней стене
-                                            if (externalCurve is Line externalLine)
+                                            // Для Line кривых Evaluate() принимает нормализованный параметр (0-1)
+                                            if (externalCurve is Line)
                                             {
-                                                // Для Line применяем нормализованный параметр (0-1) к длине
-                                                double externalParam = normalizedParam * externalLine.Length;
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                                // Для Line используем нормализованный параметр напрямую (0-1)
+                                                insertionPoint = externalCurve.Evaluate(normalizedParam, true);
                                             }
                                             else
                                             {
@@ -3818,15 +3811,8 @@ private static Curve ExtendCurveToJoinedWalls(
                                             }
                                             
                                             // Используем нормализованный параметр на внешней стене
-                                            if (externalCurve is Line externalLine)
-                                            {
-                                                double externalParam = bestNormalizedParam * externalLine.Length;
-                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
-                                            }
-                                            else
-                                            {
-                                                insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
-                                            }
+                                            // Для Line кривых Evaluate() принимает нормализованный параметр (0-1)
+                                            insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
                                             
                                             Log(doc, $"Использован fallback метод для окна/двери {opening.Id} (locationCurve), нормализованный параметр: {bestNormalizedParam:F3}");
                                         }
