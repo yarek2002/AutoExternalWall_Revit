@@ -3557,19 +3557,46 @@ private static Curve ExtendCurveToJoinedWalls(
                                     // Окно/дверь размещено по точке
                                     XYZ point = locationPoint.Point;
                                     
-                                    // Находим параметр точки на внутренней стене
+                                    // Находим параметр точки на внутренней стене и нормализуем его (0-1)
                                     try
                                     {
-                                        double param = innerCurve.Project(point).Parameter;
+                                        double innerParam = innerCurve.Project(point).Parameter;
                                         
-                                        // Используем тот же параметр на внешней стене
-                                        insertionPoint = externalCurve.Evaluate(param, true);
+                                        // Нормализуем параметр (приводим к диапазону 0-1)
+                                        double normalizedParam = 0.0;
+                                        if (innerCurve is Line innerLine)
+                                        {
+                                            normalizedParam = innerParam / innerLine.Length;
+                                        }
+                                        else
+                                        {
+                                            // Для нелинейных кривых используем параметр напрямую
+                                            // Но ограничиваем его диапазоном [0, 1]
+                                            double innerLength = innerCurve.GetEndParameter(1) - innerCurve.GetEndParameter(0);
+                                            normalizedParam = (innerParam - innerCurve.GetEndParameter(0)) / innerLength;
+                                            normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                        }
+                                        
+                                        // Применяем нормализованный параметр к внешней стене
+                                        if (externalCurve is Line externalLine)
+                                        {
+                                            double externalParam = normalizedParam * externalLine.Length;
+                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                        }
+                                        else
+                                        {
+                                            // Для нелинейных кривых
+                                            double externalStart = externalCurve.GetEndParameter(0);
+                                            double externalEnd = externalCurve.GetEndParameter(1);
+                                            double externalParam = externalStart + normalizedParam * (externalEnd - externalStart);
+                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                        }
                                     }
                                     catch
                                     {
                                         // Если проекция не удалась, используем ближайшую точку по расстоянию
                                         double minDist = double.MaxValue;
-                                        double bestParam = 0.0;
+                                        double bestNormalizedParam = 0.0;
                                         for (int i = 0; i <= 100; i++)
                                         {
                                             double t = i / 100.0;
@@ -3578,11 +3605,22 @@ private static Curve ExtendCurveToJoinedWalls(
                                             if (dist < minDist)
                                             {
                                                 minDist = dist;
-                                                bestParam = t;
+                                                bestNormalizedParam = t;
                                             }
                                         }
-                                        // Используем найденный параметр на внешней стене
-                                        insertionPoint = externalCurve.Evaluate(bestParam, true);
+                                        // Используем нормализованный параметр на внешней стене
+                                        if (externalCurve is Line externalLine)
+                                        {
+                                            double externalParam = bestNormalizedParam * externalLine.Length;
+                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                        }
+                                        else
+                                        {
+                                            double externalStart = externalCurve.GetEndParameter(0);
+                                            double externalEnd = externalCurve.GetEndParameter(1);
+                                            double externalParam = externalStart + bestNormalizedParam * (externalEnd - externalStart);
+                                            insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                        }
                                     }
                                 }
                                 else if (locationCurve != null)
@@ -3594,19 +3632,43 @@ private static Curve ExtendCurveToJoinedWalls(
                                         // Получаем среднюю точку кривой окна/двери
                                         XYZ midPoint = openingCurve.Evaluate(0.5, true);
                                         
-                                        // Находим параметр этой точки на внутренней стене
+                                        // Находим параметр этой точки на внутренней стене и нормализуем его
                                         try
                                         {
-                                            double param = innerCurve.Project(midPoint).Parameter;
+                                            double innerParam = innerCurve.Project(midPoint).Parameter;
                                             
-                                            // Используем тот же параметр на внешней стене
-                                            insertionPoint = externalCurve.Evaluate(param, true);
+                                            // Нормализуем параметр (приводим к диапазону 0-1)
+                                            double normalizedParam = 0.0;
+                                            if (innerCurve is Line innerLine)
+                                            {
+                                                normalizedParam = innerParam / innerLine.Length;
+                                            }
+                                            else
+                                            {
+                                                double innerLength = innerCurve.GetEndParameter(1) - innerCurve.GetEndParameter(0);
+                                                normalizedParam = (innerParam - innerCurve.GetEndParameter(0)) / innerLength;
+                                                normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                            }
+                                            
+                                            // Применяем нормализованный параметр к внешней стене
+                                            if (externalCurve is Line externalLine)
+                                            {
+                                                double externalParam = normalizedParam * externalLine.Length;
+                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            }
+                                            else
+                                            {
+                                                double externalStart = externalCurve.GetEndParameter(0);
+                                                double externalEnd = externalCurve.GetEndParameter(1);
+                                                double externalParam = externalStart + normalizedParam * (externalEnd - externalStart);
+                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            }
                                         }
                                         catch
                                         {
                                             // Если проекция не удалась, используем ближайшую точку
                                             double minDist = double.MaxValue;
-                                            double bestParam = 0.0;
+                                            double bestNormalizedParam = 0.0;
                                             for (int i = 0; i <= 100; i++)
                                             {
                                                 double t = i / 100.0;
@@ -3615,10 +3677,22 @@ private static Curve ExtendCurveToJoinedWalls(
                                                 if (dist < minDist)
                                                 {
                                                     minDist = dist;
-                                                    bestParam = t;
+                                                    bestNormalizedParam = t;
                                                 }
                                             }
-                                            insertionPoint = externalCurve.Evaluate(bestParam, true);
+                                            // Используем нормализованный параметр на внешней стене
+                                            if (externalCurve is Line externalLine)
+                                            {
+                                                double externalParam = bestNormalizedParam * externalLine.Length;
+                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            }
+                                            else
+                                            {
+                                                double externalStart = externalCurve.GetEndParameter(0);
+                                                double externalEnd = externalCurve.GetEndParameter(1);
+                                                double externalParam = externalStart + bestNormalizedParam * (externalEnd - externalStart);
+                                                insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            }
                                         }
                                     }
                                 }
@@ -3986,3 +4060,5 @@ private static Curve ExtendCurveToJoinedWalls(
 
     }
 }
+
+
