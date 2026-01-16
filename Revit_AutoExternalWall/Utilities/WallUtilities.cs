@@ -3016,83 +3016,6 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
-        /// Проверяет, принадлежит ли окно/дверь данному помещению
-        /// Использует Room.GetRoom для определения помещения по точке окна/двери
-        /// </summary>
-        private static bool DoesOpeningBelongToRoom(Document doc, FamilyInstance opening, Room room)
-        {
-            try
-            {
-                // Получаем позицию окна/двери
-                LocationPoint locationPoint = opening.Location as LocationPoint;
-                LocationCurve locationCurve = opening.Location as LocationCurve;
-                
-                XYZ openingPoint = null;
-                if (locationPoint != null)
-                {
-                    openingPoint = locationPoint.Point;
-                }
-                else if (locationCurve != null && locationCurve.Curve != null)
-                {
-                    openingPoint = locationCurve.Curve.Evaluate(0.5, true);
-                }
-
-                if (openingPoint == null) return false;
-
-                // Используем Room.GetRoom для определения помещения по точке
-                // Смещаем точку немного внутрь от стены, чтобы она точно попала в помещение
-                Wall hostWall = opening.Host as Wall;
-                if (hostWall != null)
-                {
-                    LocationCurve wallLocation = hostWall.Location as LocationCurve;
-                    if (wallLocation != null && wallLocation.Curve != null)
-                    {
-                        Curve wallCurve = wallLocation.Curve;
-                        // Находим ближайшую точку на стене
-                        double param = wallCurve.Project(openingPoint).Parameter;
-                        XYZ pointOnWall = wallCurve.Evaluate(param, true);
-                        
-                        // Вычисляем направление от стены к окну/двери
-                        XYZ direction = (openingPoint - pointOnWall).Normalize();
-                        
-                        // Смещаем точку немного внутрь от стены (в направлении окна/двери)
-                        // Используем небольшое смещение (около 0.1 фута)
-                        XYZ testPoint = openingPoint + direction * 0.1;
-                        
-                        // Проверяем, в каком помещении находится эта точка
-                        Room roomAtPoint = doc.GetRoomAtPoint(testPoint);
-                        if (roomAtPoint != null && roomAtPoint.Id == room.Id)
-                        {
-                            return true;
-                        }
-                    }
-                }
-
-                // Если не удалось определить через GetRoom, проверяем расстояние до центра помещения
-                // Это fallback метод
-                XYZ roomCenter = (room.Location as LocationPoint)?.Point;
-                if (roomCenter != null)
-                {
-                    double distance = openingPoint.DistanceTo(roomCenter);
-                    // Если окно/дверь находится достаточно близко к центру помещения, считаем что принадлежит
-                    // Используем большое расстояние как запасной вариант
-                    if (distance < 100.0) // 100 футов - достаточно большой радиус
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-            catch (Exception ex)
-            {
-                // В случае ошибки считаем что принадлежит (безопасный вариант)
-                Log(doc, $"Ошибка при проверке принадлежности окна/двери {opening.Id} помещению {room.Id}: {ex.Message}");
-                return true;
-            }
-        }
-
-        /// <summary>
         /// Создает проемы во внешних стенах на основе окон и дверей из внутренних стен
         /// Использует подход Room Finisher: соединяет геометрию стен и позволяет проемам автоматически прорезать обе стены
         /// </summary>
@@ -3435,10 +3358,6 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
-                // Словарь для отслеживания уже скопированных окон/дверей
-                // Ключ: ElementId окна/двери, Значение: ElementId помещения, для которого оно было скопировано
-                Dictionary<ElementId, ElementId> copiedOpenings = new Dictionary<ElementId, ElementId>();
-
                 foreach (Room room in rooms)
                 {
                     // Получаем окна и двери из помещения
@@ -3449,36 +3368,12 @@ private static Curve ExtendCurveToJoinedWalls(
                         Wall hostWall = opening.Host as Wall;
                         if (hostWall == null) continue;
 
-                        // Проверяем, не было ли уже скопировано это окно/дверь
-                        // Если окно уже скопировано, пропускаем его, чтобы избежать дубликатов
-                        if (copiedOpenings.ContainsKey(opening.Id))
-                        {
-                            continue; // Уже скопировано, пропускаем
-                        }
-
-                        // Проверяем, действительно ли окно/дверь принадлежит этому помещению
-                        // Это важно, когда стена граничит с несколькими помещениями
-                        if (!DoesOpeningBelongToRoom(doc, opening, room))
-                        {
-                            continue; // Окно/дверь не принадлежит этому помещению, пропускаем
-                        }
-
                         // Ищем внешние стены для этой внутренней стены и помещения
                         Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
                         if (!innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWalls))
                         {
                             continue;
                         }
-
-                        if (externalWalls == null || externalWalls.Count == 0)
-                        {
-                            continue;
-                        }
-
-                        // ВАЖНО: Копируем окно/дверь только в ПЕРВУЮ внешнюю стену для этой пары (стена, помещение)
-                        // Если стена разделена на сегменты, все сегменты относятся к одному помещению,
-                        // и окно должно быть скопировано только один раз
-                        Wall externalWall = externalWalls[0]; // Берем первую внешнюю стену
 
                         // Получаем параметры исходного окна/двери
                         FamilySymbol familySymbol = opening.Symbol;
@@ -3519,136 +3414,132 @@ private static Curve ExtendCurveToJoinedWalls(
                             sillHeight = sillHeightParam.AsDouble();
                         }
 
-                        // Создаем копию окна/двери в первой внешней стене
-                        try
+                        // Для каждой внешней стены создаем копию окна/двери
+                        foreach (Wall externalWall in externalWalls)
                         {
-                            FamilyInstance newOpening = null;
-                            XYZ insertionPoint = null;
-
-                            // Получаем кривые внутренней и внешней стен
-                            LocationCurve innerWallLocation = hostWall.Location as LocationCurve;
-                            LocationCurve externalWallLocation = externalWall.Location as LocationCurve;
-                            
-                            if (innerWallLocation == null || innerWallLocation.Curve == null ||
-                                externalWallLocation == null || externalWallLocation.Curve == null)
+                            try
                             {
-                                continue;
-                            }
+                                FamilyInstance newOpening = null;
+                                XYZ insertionPoint = null;
 
-                            Curve innerCurve = innerWallLocation.Curve;
-                            Curve externalCurve = externalWallLocation.Curve;
-
-                            if (locationPoint != null)
-                            {
-                                // Окно/дверь размещено по точке
-                                XYZ point = locationPoint.Point;
+                                // Получаем кривые внутренней и внешней стен
+                                LocationCurve innerWallLocation = hostWall.Location as LocationCurve;
+                                LocationCurve externalWallLocation = externalWall.Location as LocationCurve;
                                 
-                                // Находим параметр точки на внутренней стене
-                                try
+                                if (innerWallLocation == null || innerWallLocation.Curve == null ||
+                                    externalWallLocation == null || externalWallLocation.Curve == null)
                                 {
-                                    double param = innerCurve.Project(point).Parameter;
-                                    
-                                    // Используем тот же параметр на внешней стене
-                                    insertionPoint = externalCurve.Evaluate(param, true);
+                                    continue;
                                 }
-                                catch
+
+                                Curve innerCurve = innerWallLocation.Curve;
+                                Curve externalCurve = externalWallLocation.Curve;
+
+                                if (locationPoint != null)
                                 {
-                                    // Если проекция не удалась, используем ближайшую точку по расстоянию
-                                    double minDist = double.MaxValue;
-                                    double bestParam = 0.0;
-                                    for (int i = 0; i <= 100; i++)
-                                    {
-                                        double t = i / 100.0;
-                                        XYZ testPoint = innerCurve.Evaluate(t, true);
-                                        double dist = point.DistanceTo(testPoint);
-                                        if (dist < minDist)
-                                        {
-                                            minDist = dist;
-                                            bestParam = t;
-                                        }
-                                    }
-                                    // Используем найденный параметр на внешней стене
-                                    insertionPoint = externalCurve.Evaluate(bestParam, true);
-                                }
-                            }
-                            else if (locationCurve != null)
-                            {
-                                // Окно/дверь размещено по кривой (например, для дверей)
-                                Curve openingCurve = locationCurve.Curve;
-                                if (openingCurve != null)
-                                {
-                                    // Получаем среднюю точку кривой окна/двери
-                                    XYZ midPoint = openingCurve.Evaluate(0.5, true);
+                                    // Окно/дверь размещено по точке
+                                    XYZ point = locationPoint.Point;
                                     
-                                    // Находим параметр этой точки на внутренней стене
+                                    // Находим параметр точки на внутренней стене
                                     try
                                     {
-                                        double param = innerCurve.Project(midPoint).Parameter;
+                                        double param = innerCurve.Project(point).Parameter;
                                         
                                         // Используем тот же параметр на внешней стене
                                         insertionPoint = externalCurve.Evaluate(param, true);
                                     }
                                     catch
                                     {
-                                        // Если проекция не удалась, используем ближайшую точку
+                                        // Если проекция не удалась, используем ближайшую точку по расстоянию
                                         double minDist = double.MaxValue;
                                         double bestParam = 0.0;
                                         for (int i = 0; i <= 100; i++)
                                         {
                                             double t = i / 100.0;
                                             XYZ testPoint = innerCurve.Evaluate(t, true);
-                                            double dist = midPoint.DistanceTo(testPoint);
+                                            double dist = point.DistanceTo(testPoint);
                                             if (dist < minDist)
                                             {
                                                 minDist = dist;
                                                 bestParam = t;
                                             }
                                         }
+                                        // Используем найденный параметр на внешней стене
                                         insertionPoint = externalCurve.Evaluate(bestParam, true);
                                     }
                                 }
-                            }
-
-                            if (insertionPoint != null)
-                            {
-                                // Создаем новое окно/дверь на внешней стене
-                                newOpening = doc.Create.NewFamilyInstance(
-                                    insertionPoint,
-                                    familySymbol,
-                                    externalWall,
-                                    level,
-                                    Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-
-                                if (newOpening != null)
+                                else if (locationCurve != null)
                                 {
-                                    // Копируем параметры из исходного окна/двери
-                                    if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
+                                    // Окно/дверь размещено по кривой (например, для дверей)
+                                    Curve openingCurve = locationCurve.Curve;
+                                    if (openingCurve != null)
                                     {
-                                        Parameter newSillHeightParam = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                                        if (newSillHeightParam != null && !newSillHeightParam.IsReadOnly)
+                                        // Получаем среднюю точку кривой окна/двери
+                                        XYZ midPoint = openingCurve.Evaluate(0.5, true);
+                                        
+                                        // Находим параметр этой точки на внутренней стене
+                                        try
                                         {
-                                            newSillHeightParam.Set(sillHeight);
+                                            double param = innerCurve.Project(midPoint).Parameter;
+                                            
+                                            // Используем тот же параметр на внешней стене
+                                            insertionPoint = externalCurve.Evaluate(param, true);
+                                        }
+                                        catch
+                                        {
+                                            // Если проекция не удалась, используем ближайшую точку
+                                            double minDist = double.MaxValue;
+                                            double bestParam = 0.0;
+                                            for (int i = 0; i <= 100; i++)
+                                            {
+                                                double t = i / 100.0;
+                                                XYZ testPoint = innerCurve.Evaluate(t, true);
+                                                double dist = midPoint.DistanceTo(testPoint);
+                                                if (dist < minDist)
+                                                {
+                                                    minDist = dist;
+                                                    bestParam = t;
+                                                }
+                                            }
+                                            insertionPoint = externalCurve.Evaluate(bestParam, true);
                                         }
                                     }
+                                }
 
-                                    // Копируем другие важные параметры
-                                    CopyInstanceParameters(opening, newOpening);
+                                if (insertionPoint != null)
+                                {
+                                    // Создаем новое окно/дверь на внешней стене
+                                    newOpening = doc.Create.NewFamilyInstance(
+                                        insertionPoint,
+                                        familySymbol,
+                                        externalWall,
+                                        level,
+                                        Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
 
-                                    copiedCount++;
-                                    Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
-                                    
-                                    // Помечаем это окно/дверь как скопированное для этого помещения
-                                    // Это предотвратит дублирование, если стена граничит с несколькими помещениями
-                                    if (!copiedOpenings.ContainsKey(opening.Id))
+                                    if (newOpening != null)
                                     {
-                                        copiedOpenings[opening.Id] = room.Id;
+                                        // Копируем параметры из исходного окна/двери
+                                        if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
+                                        {
+                                            Parameter newSillHeightParam = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                                            if (newSillHeightParam != null && !newSillHeightParam.IsReadOnly)
+                                            {
+                                                newSillHeightParam.Set(sillHeight);
+                                            }
+                                        }
+
+                                        // Копируем другие важные параметры
+                                        CopyInstanceParameters(opening, newOpening);
+
+                                        copiedCount++;
+                                        Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
                                     }
                                 }
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
+                            catch (Exception ex)
+                            {
+                                Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
+                            }
                         }
                     }
                 }
