@@ -15,6 +15,11 @@ namespace Revit_AutoExternalWall
         /// </summary>
         public bool CreateOpenings { get; set; } = true;
 
+        /// <summary>
+        /// Включено ли копирование окон и дверей из внутренних стен во внешние стены
+        /// </summary>
+        public bool CopyOpeningsToExternalWalls { get; set; } = false;
+
         private static string GetSettingsPath()
         {
             string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);

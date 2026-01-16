@@ -14,11 +14,13 @@ namespace Revit_AutoExternalWall
             InitializeComponent();
             Settings = settings;
             chkCreateOpenings.IsChecked = settings.CreateOpenings;
+            chkCopyOpenings.IsChecked = settings.CopyOpeningsToExternalWalls;
         }
 
         private void BtnOk_Click(object sender, RoutedEventArgs e)
         {
             Settings.CreateOpenings = chkCreateOpenings.IsChecked ?? true;
+            Settings.CopyOpeningsToExternalWalls = chkCopyOpenings.IsChecked ?? false;
             Settings.Save();
             DialogResult = true;
             Close();

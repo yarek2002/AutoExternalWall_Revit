@@ -1,7 +1,7 @@
 <Window x:Class="Revit_AutoExternalWall.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Настройки AutoExternalWall" Height="200" Width="400"
+        Title="Настройки AutoExternalWall" Height="280" Width="450"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize">
     <Grid Margin="15">
@@ -20,6 +20,16 @@
                       IsChecked="True"
                       Margin="0,5"/>
             <TextBlock Text="Когда включено, проемы будут автоматически создаваться во внешних стенах на основе окон и дверей из внутренних стен."
+                       TextWrapping="Wrap"
+                       Margin="20,5,0,0"
+                       Foreground="Gray"
+                       FontSize="11"/>
+            
+            <CheckBox x:Name="chkCopyOpenings" 
+                      Content="Копировать окна и двери во внешние стены"
+                      IsChecked="False"
+                      Margin="0,15,0,5"/>
+            <TextBlock Text="Когда включено, окна и двери из внутренних стен будут копироваться во внешние стены в тех же местах."
                        TextWrapping="Wrap"
                        Margin="20,5,0,0"
                        Foreground="Gray"
