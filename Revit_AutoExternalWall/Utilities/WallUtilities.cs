@@ -1682,9 +1682,15 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         double distToEnd = sourceEndPoint.DistanceTo(adjacentEnd);
         if (distToStart > distToEnd) adjacentDir = -adjacentDir;
 
-        // Вычисляем угол между стенами
-        double dotProduct = Math.Abs(sourceDir.DotProduct(adjacentDir));
+        // Вычисляем угол между стенами БЕЗ потери информации о направлении
+        // Math.Abs убивает информацию о внутренней/внешней стороне и выпуклости/вогнутости угла
+        double dotProduct = sourceDir.DotProduct(adjacentDir);
         double angle = Math.Acos(Math.Min(1.0, Math.Max(-1.0, dotProduct)));
+        
+        // Определяем направление угла через CrossProduct (для выпуклых/вогнутых углов)
+        // CrossProduct.Z покажет направление поворота
+        XYZ crossProduct = sourceDir.CrossProduct(adjacentDir);
+        // Знак Z компоненты показывает направление поворота в плоскости XY
         
         // Если угол очень мал (стены почти параллельны) или очень большой (почти противоположны)
         if (angle < 0.1 || angle > Math.PI - 0.1)
