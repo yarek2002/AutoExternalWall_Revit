@@ -3532,57 +3532,24 @@ private static Curve ExtendCurveToJoinedWalls(
                         }
                         if (level == null) continue;
 
-                        // Получаем положение окна/двери на внутренней стене
+                        // Получаем реальную позицию окна/двери в пространстве (не относительно оси стены)
                         LocationPoint locationPoint = opening.Location as LocationPoint;
                         LocationCurve locationCurve = opening.Location as LocationCurve;
 
-                        // Получаем позицию окна/двери и параметр на кривой внутренней стены
-                        XYZ openingPosition = null;
-                        double openingParameter = 0.5; // Параметр по умолчанию (середина)
-                        bool hasValidParameter = false;
-
-                        // Получаем кривую внутренней стены
-                        LocationCurve hostLocation = hostWall.Location as LocationCurve;
-                        Curve hostCurve = hostLocation?.Curve;
-
+                        XYZ openingAbsolutePosition = null;
                         if (locationPoint != null)
                         {
-                            openingPosition = locationPoint.Point;
-                            // Получаем параметр точки на кривой внутренней стены
-                            if (hostCurve != null)
-                            {
-                                try
-                                {
-                                    openingParameter = hostCurve.Project(openingPosition).Parameter;
-                                    hasValidParameter = true;
-                                }
-                                catch
-                                {
-                                    // Если проекция не удалась, используем значение по умолчанию
-                                }
-                            }
+                            openingAbsolutePosition = locationPoint.Point;
                         }
                         else if (locationCurve != null && locationCurve.Curve != null)
                         {
-                            openingPosition = locationCurve.Curve.Evaluate(0.5, true);
-                            // Получаем параметр точки на кривой внутренней стены
-                            if (hostCurve != null)
-                            {
-                                try
-                                {
-                                    openingParameter = hostCurve.Project(openingPosition).Parameter;
-                                    hasValidParameter = true;
-                                }
-                                catch
-                                {
-                                    // Если проекция не удалась, используем значение по умолчанию
-                                }
-                            }
+                            // Для LocationCurve берем среднюю точку кривой окна
+                            openingAbsolutePosition = locationCurve.Curve.Evaluate(0.5, true);
                         }
 
-                        if (openingPosition == null || hostCurve == null) continue;
+                        if (openingAbsolutePosition == null) continue;
 
-                        // Находим ближайшую внешнюю стену к исходной позиции окна
+                        // Находим ближайшую внешнюю стену к реальной позиции окна
                         // Это важно, когда стена разделена на сегменты для разных помещений
                         Wall bestExternalWall = null;
                         double minDistance = double.MaxValue;
@@ -3598,40 +3565,13 @@ private static Curve ExtendCurveToJoinedWalls(
 
                             try
                             {
-                                XYZ candidatePoint = null;
+                                // Проецируем абсолютную позицию окна на кривую внешней стены
+                                // Это даст точку на оси внешней стены, ближайшую к реальной позиции окна
+                                double param = candidateCurve.Project(openingAbsolutePosition).Parameter;
+                                XYZ candidatePoint = candidateCurve.Evaluate(param, true);
                                 
-                                // Если у нас есть валидный параметр на внутренней стене, используем его
-                                if (hasValidParameter)
-                                {
-                                    // Используем тот же параметр, что и на внутренней стене, для сохранения относительного положения
-                                    // Но сначала проверяем, что параметр находится в пределах кривой внешней стены
-                                    double candidateParam = openingParameter;
-                                    
-                                    // Если кривые имеют разную длину, нормализуем параметр относительно длины
-                                    double hostLength = hostCurve.Length;
-                                    double candidateLength = candidateCurve.Length;
-                                    
-                                    if (hostLength > 0 && candidateLength > 0)
-                                    {
-                                        // Нормализуем параметр относительно длины кривой
-                                        double normalizedParam = openingParameter / hostLength;
-                                        candidateParam = normalizedParam * candidateLength;
-                                    }
-                                    
-                                    // Ограничиваем параметр пределами кривой
-                                    if (candidateParam < 0) candidateParam = 0;
-                                    if (candidateParam > candidateLength) candidateParam = candidateLength;
-                                    
-                                    candidatePoint = candidateCurve.Evaluate(candidateParam, true);
-                                }
-                                else
-                                {
-                                    // Если не удалось получить параметр, используем проекцию как запасной вариант
-                                    double param = candidateCurve.Project(openingPosition).Parameter;
-                                    candidatePoint = candidateCurve.Evaluate(param, true);
-                                }
-                                
-                                double distance = openingPosition.DistanceTo(candidatePoint);
+                                // Вычисляем расстояние от реальной позиции окна до оси внешней стены
+                                double distance = openingAbsolutePosition.DistanceTo(candidatePoint);
 
                                 // Если эта стена ближе к окну, используем её
                                 if (distance < minDistance)
@@ -3643,34 +3583,17 @@ private static Curve ExtendCurveToJoinedWalls(
                             }
                             catch
                             {
-                                // Если не удалось использовать параметр, используем проекцию как запасной вариант
-                                try
+                                // Если проекция не удалась, пробуем найти ближайшую точку
+                                for (int i = 0; i <= 100; i++)
                                 {
-                                    double param = candidateCurve.Project(openingPosition).Parameter;
-                                    XYZ candidatePoint = candidateCurve.Evaluate(param, true);
-                                    double distance = openingPosition.DistanceTo(candidatePoint);
-
+                                    double t = i / 100.0;
+                                    XYZ testPoint = candidateCurve.Evaluate(t, true);
+                                    double distance = openingAbsolutePosition.DistanceTo(testPoint);
                                     if (distance < minDistance)
                                     {
                                         minDistance = distance;
                                         bestExternalWall = candidateWall;
-                                        bestInsertionPoint = candidatePoint;
-                                    }
-                                }
-                                catch
-                                {
-                                    // Если проекция не удалась, пробуем найти ближайшую точку
-                                    for (int i = 0; i <= 100; i++)
-                                    {
-                                        double t = i / 100.0;
-                                        XYZ testPoint = candidateCurve.Evaluate(t, true);
-                                        double distance = openingPosition.DistanceTo(testPoint);
-                                        if (distance < minDistance)
-                                        {
-                                            minDistance = distance;
-                                            bestExternalWall = candidateWall;
-                                            bestInsertionPoint = testPoint;
-                                        }
+                                        bestInsertionPoint = testPoint;
                                     }
                                 }
                             }
