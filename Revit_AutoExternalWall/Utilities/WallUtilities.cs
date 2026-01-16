@@ -2614,13 +2614,13 @@ private static Curve ExtendCurveToJoinedWalls(
                     Log(doc, "Создание проемов отключено в настройках. Пропускаем соединение геометрии.");
                 }
 
-                // Копируем окна и двери во внешние стены, если это включено в настройках
+                // Устанавливаем окна и двери во внешние стены, если это включено в настройках
                 if (settings.CopyOpeningsToExternalWalls)
                 {
                     int copiedCount = CopyOpeningsToExternalWalls(doc, rooms, innerWallRoomToExternalWallsMap);
                     if (copiedCount > 0)
                     {
-                        Log(doc, $"Скопировано {copiedCount} окон/дверей во внешние стены.");
+                        Log(doc, $"Установлено {copiedCount} окон/дверей во внешние стены.");
                     }
                 }
 
@@ -3442,7 +3442,8 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
-        /// Копирует окна и двери из внутренних стен во внешние стены
+        /// Устанавливает окна и двери во внешние стены с тем же семейством и типоразмером, что и в исходных стенах
+        /// Не копирует параметры - просто устанавливает то же семейство и типоразмер
         /// </summary>
         private static int CopyOpeningsToExternalWalls(Document doc, List<Room> rooms, Dictionary<Tuple<ElementId, ElementId>, List<Wall>> innerWallRoomToExternalWallsMap)
         {
@@ -3452,8 +3453,8 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
-                // Множество для отслеживания уже скопированных окон/дверей
-                // Каждое окно/дверь копируется только один раз
+                // Множество для отслеживания уже обработанных окон/дверей
+                // Каждое окно/дверь устанавливается только один раз
                 HashSet<ElementId> copiedOpenings = new HashSet<ElementId>();
 
                 foreach (Room room in rooms)
@@ -3515,14 +3516,6 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Получаем положение окна/двери на внутренней стене
                         LocationPoint locationPoint = opening.Location as LocationPoint;
                         LocationCurve locationCurve = opening.Location as LocationCurve;
-
-                        // Получаем высоту подоконника (sill height)
-                        double sillHeight = 0.0;
-                        Parameter sillHeightParam = opening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                        if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
-                        {
-                            sillHeight = sillHeightParam.AsDouble();
-                        }
 
                         // Получаем позицию окна/двери для определения ближайшей внешней стены
                         XYZ openingPosition = null;
@@ -3597,7 +3590,7 @@ private static Curve ExtendCurveToJoinedWalls(
 
                             if (insertionPoint != null)
                             {
-                                // Создаем новое окно/дверь на внешней стене
+                                // Создаем новое окно/дверь на внешней стене с тем же семейством и типоразмером
                                 newOpening = doc.Create.NewFamilyInstance(
                                     insertionPoint,
                                     familySymbol,
@@ -3607,23 +3600,13 @@ private static Curve ExtendCurveToJoinedWalls(
 
                                 if (newOpening != null)
                                 {
-                                    // Копируем параметры из исходного окна/двери
-                                    if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
-                                    {
-                                        Parameter newSillHeightParam = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                                        if (newSillHeightParam != null && !newSillHeightParam.IsReadOnly)
-                                        {
-                                            newSillHeightParam.Set(sillHeight);
-                                        }
-                                    }
-
-                                    // Копируем другие важные параметры
-                                    CopyInstanceParameters(opening, newOpening);
+                                    // Не копируем параметры - просто устанавливаем то же семейство и типоразмер
+                                    // Остальные параметры остаются по умолчанию для нового экземпляра
 
                                     copiedCount++;
-                                    Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {bestExternalWall.Id} (новый ID: {newOpening.Id}, расстояние до исходной позиции: {minDistance:F3})");
+                                    Log(doc, $"Установлено окно/дверь {familySymbol.Name} во внешнюю стену {bestExternalWall.Id} (новый ID: {newOpening.Id}, расстояние до исходной позиции: {minDistance:F3})");
                                     
-                                    // Помечаем это окно/дверь как скопированное
+                                    // Помечаем это окно/дверь как обработанное
                                     // Это предотвратит дублирование, если стена граничит с несколькими помещениями
                                     copiedOpenings.Add(opening.Id);
                                 }
@@ -3631,7 +3614,7 @@ private static Curve ExtendCurveToJoinedWalls(
                         }
                         catch (Exception ex)
                         {
-                            Log(doc, $"Ошибка при копировании окна/двери {opening.Id}: {ex.Message}");
+                            Log(doc, $"Ошибка при установке окна/двери {opening.Id}: {ex.Message}");
                         }
                     }
                 }
@@ -3640,7 +3623,7 @@ private static Curve ExtendCurveToJoinedWalls(
             }
             catch (Exception ex)
             {
-                Log(doc, $"Ошибка при копировании окон/дверей во внешние стены: {ex.Message}");
+                Log(doc, $"Ошибка при установке окон/дверей во внешние стены: {ex.Message}");
             }
 
             return copiedCount;
@@ -3934,14 +3917,14 @@ private static Curve ExtendCurveToJoinedWalls(
                     Log(doc, "Создание проемов отключено в настройках. Пропускаем соединение геометрии.");
                 }
 
-                // Копируем окна и двери во внешние стены, если это включено в настройках
+                // Устанавливаем окна и двери во внешние стены, если это включено в настройках
                 if (settings.CopyOpeningsToExternalWalls)
                 {
                     List<Room> singleRoomList = new List<Room> { room };
                     int copiedCount = CopyOpeningsToExternalWalls(doc, singleRoomList, innerWallRoomToExternalWallsMap);
                     if (copiedCount > 0)
                     {
-                        Log(doc, $"Скопировано {copiedCount} окон/дверей во внешние стены.");
+                        Log(doc, $"Установлено {copiedCount} окон/дверей во внешние стены.");
                     }
                 }
 
