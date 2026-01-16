@@ -3734,6 +3734,9 @@ private static Curve ExtendCurveToJoinedWalls(
                             normal = face.ComputeNormal(uv);
                             // Проецируем на горизонтальную плоскость (XY)
                             normal = new XYZ(normal.X, normal.Y, 0).Normalize();
+                            // Инвертируем нормаль, так как ComputeNormal может указывать внутрь
+                            // Нам нужно направление наружу от здания
+                            normal = -normal;
                         }
                     }
                 }
@@ -3746,6 +3749,8 @@ private static Curve ExtendCurveToJoinedWalls(
                 if (normal == null || normal.GetLength() < 0.1)
                 {
                     normal = GetWallFaceNormal(wall);
+                    // Инвертируем нормаль, так как GetWallFaceNormal может указывать в неправильном направлении
+                    normal = -normal;
                 }
 
                 // Вычисляем азимут (угол от севера)
