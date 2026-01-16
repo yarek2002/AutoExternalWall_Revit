@@ -3422,58 +3422,86 @@ private static Curve ExtendCurveToJoinedWalls(
                                 FamilyInstance newOpening = null;
                                 XYZ insertionPoint = null;
 
+                                // Получаем кривые внутренней и внешней стен
+                                LocationCurve innerWallLocation = hostWall.Location as LocationCurve;
+                                LocationCurve externalWallLocation = externalWall.Location as LocationCurve;
+                                
+                                if (innerWallLocation == null || innerWallLocation.Curve == null ||
+                                    externalWallLocation == null || externalWallLocation.Curve == null)
+                                {
+                                    continue;
+                                }
+
+                                Curve innerCurve = innerWallLocation.Curve;
+                                Curve externalCurve = externalWallLocation.Curve;
+
                                 if (locationPoint != null)
                                 {
                                     // Окно/дверь размещено по точке
                                     XYZ point = locationPoint.Point;
                                     
-                                    // Находим ближайшую точку на внешней стене
-                                    LocationCurve wallLocation = externalWall.Location as LocationCurve;
-                                    if (wallLocation != null && wallLocation.Curve != null)
+                                    // Находим параметр точки на внутренней стене
+                                    try
                                     {
-                                        // Проецируем точку на кривую внешней стены
-                                        Curve externalCurve = wallLocation.Curve;
-                                        try
+                                        double param = innerCurve.Project(point).Parameter;
+                                        
+                                        // Используем тот же параметр на внешней стене
+                                        insertionPoint = externalCurve.Evaluate(param, true);
+                                    }
+                                    catch
+                                    {
+                                        // Если проекция не удалась, используем ближайшую точку по расстоянию
+                                        double minDist = double.MaxValue;
+                                        double bestParam = 0.0;
+                                        for (int i = 0; i <= 100; i++)
                                         {
-                                            double param = externalCurve.Project(point).Parameter;
-                                            insertionPoint = externalCurve.Evaluate(param, true);
-                                        }
-                                        catch
-                                        {
-                                            // Если проекция не удалась, используем ближайшую точку по расстоянию
-                                            double minDist = double.MaxValue;
-                                            XYZ closestPoint = null;
-                                            for (int i = 0; i <= 100; i++)
+                                            double t = i / 100.0;
+                                            XYZ testPoint = innerCurve.Evaluate(t, true);
+                                            double dist = point.DistanceTo(testPoint);
+                                            if (dist < minDist)
                                             {
-                                                double t = i / 100.0;
-                                                XYZ testPoint = externalCurve.Evaluate(t, true);
-                                                double dist = point.DistanceTo(testPoint);
-                                                if (dist < minDist)
-                                                {
-                                                    minDist = dist;
-                                                    closestPoint = testPoint;
-                                                }
+                                                minDist = dist;
+                                                bestParam = t;
                                             }
-                                            insertionPoint = closestPoint;
                                         }
+                                        // Используем найденный параметр на внешней стене
+                                        insertionPoint = externalCurve.Evaluate(bestParam, true);
                                     }
                                 }
                                 else if (locationCurve != null)
                                 {
                                     // Окно/дверь размещено по кривой (например, для дверей)
-                                    Curve curve = locationCurve.Curve;
-                                    if (curve != null)
+                                    Curve openingCurve = locationCurve.Curve;
+                                    if (openingCurve != null)
                                     {
-                                        // Получаем среднюю точку кривой
-                                        XYZ midPoint = curve.Evaluate(0.5, true);
+                                        // Получаем среднюю точку кривой окна/двери
+                                        XYZ midPoint = openingCurve.Evaluate(0.5, true);
                                         
-                                        // Находим ближайшую точку на внешней стене
-                                        LocationCurve wallLocation = externalWall.Location as LocationCurve;
-                                        if (wallLocation != null && wallLocation.Curve != null)
+                                        // Находим параметр этой точки на внутренней стене
+                                        try
                                         {
-                                            Curve externalCurve = wallLocation.Curve;
-                                            double param = externalCurve.Project(midPoint).Parameter;
+                                            double param = innerCurve.Project(midPoint).Parameter;
+                                            
+                                            // Используем тот же параметр на внешней стене
                                             insertionPoint = externalCurve.Evaluate(param, true);
+                                        }
+                                        catch
+                                        {
+                                            // Если проекция не удалась, используем ближайшую точку
+                                            double minDist = double.MaxValue;
+                                            double bestParam = 0.0;
+                                            for (int i = 0; i <= 100; i++)
+                                            {
+                                                double t = i / 100.0;
+                                                XYZ testPoint = innerCurve.Evaluate(t, true);
+                                                double dist = midPoint.DistanceTo(testPoint);
+                                                if (dist < minDist)
+                                                {
+                                                    minDist = dist;
+                                                    bestParam = t;
+                                                }
+                                            }
+                                            insertionPoint = externalCurve.Evaluate(bestParam, true);
                                         }
                                     }
                                 }
