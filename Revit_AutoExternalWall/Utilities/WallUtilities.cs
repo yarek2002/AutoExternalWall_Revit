@@ -3435,6 +3435,10 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
+                // Словарь для отслеживания уже скопированных окон/дверей
+                // Ключ: ElementId окна/двери, Значение: ElementId помещения, для которого оно было скопировано
+                Dictionary<ElementId, ElementId> copiedOpenings = new Dictionary<ElementId, ElementId>();
+
                 foreach (Room room in rooms)
                 {
                     // Получаем окна и двери из помещения
@@ -3444,6 +3448,13 @@ private static Curve ExtendCurveToJoinedWalls(
                     {
                         Wall hostWall = opening.Host as Wall;
                         if (hostWall == null) continue;
+
+                        // Проверяем, не было ли уже скопировано это окно/дверь
+                        // Если окно уже скопировано, пропускаем его, чтобы избежать дубликатов
+                        if (copiedOpenings.ContainsKey(opening.Id))
+                        {
+                            continue; // Уже скопировано, пропускаем
+                        }
 
                         // Проверяем, действительно ли окно/дверь принадлежит этому помещению
                         // Это важно, когда стена граничит с несколькими помещениями
@@ -3617,6 +3628,13 @@ private static Curve ExtendCurveToJoinedWalls(
 
                                         copiedCount++;
                                         Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
+                                        
+                                        // Помечаем это окно/дверь как скопированное для этого помещения
+                                        // Это предотвратит дублирование, если стена граничит с несколькими помещениями
+                                        if (!copiedOpenings.ContainsKey(opening.Id))
+                                        {
+                                            copiedOpenings[opening.Id] = room.Id;
+                                        }
                                     }
                                 }
                             }
