@@ -3358,6 +3358,10 @@ private static Curve ExtendCurveToJoinedWalls(
             {
                 doc.Regenerate(); // Убеждаемся, что все стены созданы
 
+                // Словарь для отслеживания уже скопированных окон/дверей по внутренней стене
+                // Ключ: ElementId внутренней стены, Значение: HashSet уже скопированных окон/дверей
+                Dictionary<ElementId, HashSet<ElementId>> copiedOpeningsByWall = new Dictionary<ElementId, HashSet<ElementId>>();
+
                 foreach (Room room in rooms)
                 {
                     // Получаем окна и двери из помещения
@@ -3368,9 +3372,30 @@ private static Curve ExtendCurveToJoinedWalls(
                         Wall hostWall = opening.Host as Wall;
                         if (hostWall == null) continue;
 
-                        // Ищем внешние стены для этой внутренней стены и помещения
-                        Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
-                        if (!innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWalls))
+                        // Проверяем, не было ли уже скопировано это окно/дверь для этой внутренней стены
+                        if (!copiedOpeningsByWall.ContainsKey(hostWall.Id))
+                        {
+                            copiedOpeningsByWall[hostWall.Id] = new HashSet<ElementId>();
+                        }
+
+                        if (copiedOpeningsByWall[hostWall.Id].Contains(opening.Id))
+                        {
+                            // Это окно/дверь уже было скопировано для этой стены
+                            continue;
+                        }
+
+                        // Ищем внешние стены для этой внутренней стены
+                        // Проверяем все помещения, которые используют эту стену
+                        List<Wall> allExternalWallsForThisInnerWall = new List<Wall>();
+                        foreach (var kvp in innerWallRoomToExternalWallsMap)
+                        {
+                            if (kvp.Key.Item1 == hostWall.Id)
+                            {
+                                allExternalWallsForThisInnerWall.AddRange(kvp.Value);
+                            }
+                        }
+
+                        if (allExternalWallsForThisInnerWall.Count == 0)
                         {
                             continue;
                         }
@@ -3415,7 +3440,8 @@ private static Curve ExtendCurveToJoinedWalls(
                         }
 
                         // Для каждой внешней стены создаем копию окна/двери
-                        foreach (Wall externalWall in externalWalls)
+                        // Используем все внешние стены для этой внутренней стены (из всех помещений)
+                        foreach (Wall externalWall in allExternalWallsForThisInnerWall)
                         {
                             try
                             {
@@ -3541,6 +3567,10 @@ private static Curve ExtendCurveToJoinedWalls(
                                 Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
                             }
                         }
+
+                        // Помечаем это окно/дверь как скопированное для этой внутренней стены
+                        // Это предотвратит дублирование, если стена используется несколькими помещениями
+                        copiedOpeningsByWall[hostWall.Id].Add(opening.Id);
                     }
                 }
 
