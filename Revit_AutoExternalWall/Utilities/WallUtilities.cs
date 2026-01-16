@@ -3274,6 +3274,7 @@ private static Curve ExtendCurveToJoinedWalls(
                             // Проверяем, что соединение прошло успешно
                             if (JoinGeometryUtils.AreElementsJoined(doc, innerWall, externalWall))
                             {
+                                joinsCreated++; // Увеличиваем счетчик только когда соединение действительно создано
                                 Log(doc, $"✓ Успешно соединена геометрия между внутренней стеной {innerWall.Id} и внешней стеной {externalWall.Id} для помещения {room.Id}");
                             }
                             else
