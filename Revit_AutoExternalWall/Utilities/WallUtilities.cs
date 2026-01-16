@@ -3883,6 +3883,7 @@ private static Curve ExtendCurveToJoinedWalls(
                                     Log(doc, $"Не удалось определить точку вставки для окна/двери {opening.Id} на внешней стене {externalWall.Id}");
                                 }
                             }
+                            }
                             catch (Exception ex)
                             {
                                 Log(doc, $"Ошибка при копировании окна/двери {opening.Id} во внешнюю стену {externalWall.Id}: {ex.Message}");
