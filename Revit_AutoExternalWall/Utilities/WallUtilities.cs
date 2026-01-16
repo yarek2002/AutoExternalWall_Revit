@@ -3489,8 +3489,17 @@ private static Curve ExtendCurveToJoinedWalls(
                         Tuple<ElementId, ElementId> key = new Tuple<ElementId, ElementId>(hostWall.Id, room.Id);
                         if (!innerWallRoomToExternalWallsMap.TryGetValue(key, out List<Wall> externalWalls))
                         {
+                            Log(doc, $"Не найдены внешние стены для внутренней стены {hostWall.Id} и помещения {room.Id}");
                             continue;
                         }
+                        
+                        if (externalWalls == null || externalWalls.Count == 0)
+                        {
+                            Log(doc, $"Список внешних стен пуст для внутренней стены {hostWall.Id} и помещения {room.Id}");
+                            continue;
+                        }
+                        
+                        Log(doc, $"Обрабатываем окно/дверь {opening.Id}: найдено {externalWalls.Count} внешних стен для копирования");
 
                         // Получаем параметры исходного окна/двери
                         FamilySymbol familySymbol = opening.Symbol;
@@ -3546,6 +3555,7 @@ private static Curve ExtendCurveToJoinedWalls(
                                 if (innerWallLocation == null || innerWallLocation.Curve == null ||
                                     externalWallLocation == null || externalWallLocation.Curve == null)
                                 {
+                                    Log(doc, $"Не удалось получить кривые стен для окна/двери {opening.Id} (внутренняя: {hostWall.Id}, внешняя: {externalWall.Id})");
                                     continue;
                                 }
 
@@ -3556,11 +3566,13 @@ private static Curve ExtendCurveToJoinedWalls(
                                 {
                                     // Окно/дверь размещено по точке
                                     XYZ point = locationPoint.Point;
+                                    Log(doc, $"Окно/дверь {opening.Id} размещено по точке: ({point.X:F3}, {point.Y:F3}, {point.Z:F3})");
                                     
                                     // Находим параметр точки на внутренней стене
                                     try
                                     {
                                         double innerParam = innerCurve.Project(point).Parameter;
+                                        Log(doc, $"Параметр точки на внутренней стене {hostWall.Id}: {innerParam:F3}");
                                         
                                         // Нормализуем параметр (приводим к диапазону 0-1)
                                         double normalizedParam = 0.0;
@@ -3568,14 +3580,17 @@ private static Curve ExtendCurveToJoinedWalls(
                                         {
                                             // Для Line параметр в единицах длины, нормализуем делением на длину
                                             double innerLength = innerLine.Length;
+                                            Log(doc, $"Внутренняя стена {hostWall.Id} (Line): длина {innerLength:F3}, параметр {innerParam:F3}");
                                             if (innerLength > 0.0001)
                                             {
                                                 normalizedParam = innerParam / innerLength;
                                                 normalizedParam = Math.Max(0.0, Math.Min(1.0, normalizedParam));
+                                                Log(doc, $"Нормализованный параметр: {normalizedParam:F3}");
                                             }
                                             else
                                             {
                                                 normalizedParam = 0.5; // Если длина слишком мала, используем середину
+                                                Log(doc, $"Длина стены слишком мала, используем середину (0.5)");
                                             }
                                         }
                                         else
@@ -3608,7 +3623,9 @@ private static Curve ExtendCurveToJoinedWalls(
                                         {
                                             // Для Line применяем нормализованный параметр (0-1) к длине
                                             double externalParam = normalizedParam * externalLine.Length;
+                                            Log(doc, $"Внешняя стена {externalWall.Id} (Line): длина {externalLine.Length:F3}, параметр {externalParam:F3}");
                                             insertionPoint = externalCurve.Evaluate(externalParam, true);
+                                            Log(doc, $"Точка вставки вычислена: ({insertionPoint.X:F3}, {insertionPoint.Y:F3}, {insertionPoint.Z:F3})");
                                         }
                                         else
                                         {
@@ -3627,24 +3644,46 @@ private static Curve ExtendCurveToJoinedWalls(
                                             }
                                         }
                                     }
-                                    catch
+                                    catch (Exception projEx)
                                     {
                                         // Если проекция не удалась, используем ближайшую точку по расстоянию
+                                        Log(doc, $"Ошибка при проекции точки окна/двери {opening.Id} на внутреннюю стену {hostWall.Id}: {projEx.Message}");
+                                        
                                         double minDist = double.MaxValue;
                                         double bestNormalizedParam = 0.0;
-                                        for (int i = 0; i <= 100; i++)
+                                        
+                                        // Для Line используем параметр в единицах длины
+                                        if (innerCurve is Line innerLine)
                                         {
-                                            double t = i / 100.0;
-                                            XYZ testPoint = innerCurve.Evaluate(t, true);
-                                            double dist = point.DistanceTo(testPoint);
-                                            if (dist < minDist)
+                                            for (int i = 0; i <= 100; i++)
                                             {
-                                                minDist = dist;
-                                                bestNormalizedParam = t;
+                                                double t = i / 100.0;
+                                                double param = t * innerLine.Length;
+                                                XYZ testPoint = innerCurve.Evaluate(param, true);
+                                                double dist = point.DistanceTo(testPoint);
+                                                if (dist < minDist)
+                                                {
+                                                    minDist = dist;
+                                                    bestNormalizedParam = t;
+                                                }
                                             }
                                         }
+                                        else
+                                        {
+                                            for (int i = 0; i <= 100; i++)
+                                            {
+                                                double t = i / 100.0;
+                                                XYZ testPoint = innerCurve.Evaluate(t, true);
+                                                double dist = point.DistanceTo(testPoint);
+                                                if (dist < minDist)
+                                                {
+                                                    minDist = dist;
+                                                    bestNormalizedParam = t;
+                                                }
+                                            }
+                                        }
+                                        
                                         // Используем нормализованный параметр на внешней стене
-                                        // bestNormalizedParam уже в диапазоне 0-1
                                         if (externalCurve is Line externalLine)
                                         {
                                             double externalParam = bestNormalizedParam * externalLine.Length;
@@ -3654,6 +3693,8 @@ private static Curve ExtendCurveToJoinedWalls(
                                         {
                                             insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
                                         }
+                                        
+                                        Log(doc, $"Использован fallback метод для окна/двери {opening.Id}, нормализованный параметр: {bestNormalizedParam:F3}");
                                     }
                                 }
                                 else if (locationCurve != null)
@@ -3661,6 +3702,8 @@ private static Curve ExtendCurveToJoinedWalls(
                                     // Окно/дверь размещено по кривой (например, для дверей)
                                     Curve openingCurve = locationCurve.Curve;
                                     if (openingCurve != null)
+                                    {
+                                        Log(doc, $"Окно/дверь {opening.Id} размещено по кривой");
                                     {
                                         // Получаем среднюю точку кривой окна/двери
                                         XYZ midPoint = openingCurve.Evaluate(0.5, true);
@@ -3735,24 +3778,46 @@ private static Curve ExtendCurveToJoinedWalls(
                                                 }
                                             }
                                         }
-                                        catch
+                                        catch (Exception projEx2)
                                         {
                                             // Если проекция не удалась, используем ближайшую точку
+                                            Log(doc, $"Ошибка при проекции средней точки окна/двери {opening.Id} на внутреннюю стену {hostWall.Id}: {projEx2.Message}");
+                                            
                                             double minDist = double.MaxValue;
                                             double bestNormalizedParam = 0.0;
-                                            for (int i = 0; i <= 100; i++)
+                                            
+                                            // Для Line используем параметр в единицах длины
+                                            if (innerCurve is Line innerLine2)
                                             {
-                                                double t = i / 100.0;
-                                                XYZ testPoint = innerCurve.Evaluate(t, true);
-                                                double dist = midPoint.DistanceTo(testPoint);
-                                                if (dist < minDist)
+                                                for (int i = 0; i <= 100; i++)
                                                 {
-                                                    minDist = dist;
-                                                    bestNormalizedParam = t;
+                                                    double t = i / 100.0;
+                                                    double param = t * innerLine2.Length;
+                                                    XYZ testPoint = innerCurve.Evaluate(param, true);
+                                                    double dist = midPoint.DistanceTo(testPoint);
+                                                    if (dist < minDist)
+                                                    {
+                                                        minDist = dist;
+                                                        bestNormalizedParam = t;
+                                                    }
                                                 }
                                             }
+                                            else
+                                            {
+                                                for (int i = 0; i <= 100; i++)
+                                                {
+                                                    double t = i / 100.0;
+                                                    XYZ testPoint = innerCurve.Evaluate(t, true);
+                                                    double dist = midPoint.DistanceTo(testPoint);
+                                                    if (dist < minDist)
+                                                    {
+                                                        minDist = dist;
+                                                        bestNormalizedParam = t;
+                                                    }
+                                                }
+                                            }
+                                            
                                             // Используем нормализованный параметр на внешней стене
-                                            // bestNormalizedParam уже в диапазоне 0-1
                                             if (externalCurve is Line externalLine)
                                             {
                                                 double externalParam = bestNormalizedParam * externalLine.Length;
@@ -3762,38 +3827,60 @@ private static Curve ExtendCurveToJoinedWalls(
                                             {
                                                 insertionPoint = externalCurve.Evaluate(bestNormalizedParam, true);
                                             }
+                                            
+                                            Log(doc, $"Использован fallback метод для окна/двери {opening.Id} (locationCurve), нормализованный параметр: {bestNormalizedParam:F3}");
                                         }
                                     }
+                                }
+                                else
+                                {
+                                    Log(doc, $"Окно/дверь {opening.Id} не имеет LocationPoint или LocationCurve (Location: {opening.Location?.GetType().Name ?? "null"})");
                                 }
 
                                 if (insertionPoint != null)
                                 {
-                                    // Создаем новое окно/дверь на внешней стене
-                                    newOpening = doc.Create.NewFamilyInstance(
-                                        insertionPoint,
-                                        familySymbol,
-                                        externalWall,
-                                        level,
-                                        Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
-
-                                    if (newOpening != null)
+                                    try
                                     {
-                                        // Копируем параметры из исходного окна/двери
-                                        if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
+                                        // Создаем новое окно/дверь на внешней стене
+                                        newOpening = doc.Create.NewFamilyInstance(
+                                            insertionPoint,
+                                            familySymbol,
+                                            externalWall,
+                                            level,
+                                            Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+
+                                        if (newOpening != null)
                                         {
-                                            Parameter newSillHeightParam = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
-                                            if (newSillHeightParam != null && !newSillHeightParam.IsReadOnly)
+                                            // Копируем параметры из исходного окна/двери
+                                            if (sillHeightParam != null && !sillHeightParam.IsReadOnly)
                                             {
-                                                newSillHeightParam.Set(sillHeight);
+                                                Parameter newSillHeightParam = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                                                if (newSillHeightParam != null && !newSillHeightParam.IsReadOnly)
+                                                {
+                                                    newSillHeightParam.Set(sillHeight);
+                                                }
                                             }
+
+                                            // Копируем другие важные параметры
+                                            CopyInstanceParameters(opening, newOpening);
+
+                                            copiedCount++;
+                                            Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
                                         }
-
-                                        // Копируем другие важные параметры
-                                        CopyInstanceParameters(opening, newOpening);
-
-                                        copiedCount++;
-                                        Log(doc, $"Скопировано окно/дверь {opening.Id} во внешнюю стену {externalWall.Id} (новый ID: {newOpening.Id})");
+                                        else
+                                        {
+                                            Log(doc, $"Не удалось создать окно/дверь {opening.Id} на внешней стене {externalWall.Id} - NewFamilyInstance вернул null");
+                                        }
                                     }
+                                    catch (Exception createEx)
+                                    {
+                                        Log(doc, $"Ошибка при создании окна/двери {opening.Id} на внешней стене {externalWall.Id}: {createEx.Message}");
+                                        Log(doc, $"StackTrace: {createEx.StackTrace}");
+                                    }
+                                }
+                                else
+                                {
+                                    Log(doc, $"Не удалось определить точку вставки для окна/двери {opening.Id} на внешней стене {externalWall.Id}");
                                 }
                             }
                             catch (Exception ex)
