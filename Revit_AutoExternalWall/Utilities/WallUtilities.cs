@@ -2143,23 +2143,28 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                 }
                 else
                 {
-                    // Стены не перпендикулярны - обрабатываем как обычное пересечение
-                    // Для острых/тупых углов просто обрезаем до точки пересечения
+                    // Стены не перпендикулярны - НЕ обрезаем, если стена уже продлена правильно
+                    // Для острых/тупых углов продление уже учтено в ExtendToWallEnds
+                    // Обрезаем только если пересечение происходит внутри стены (не на концах)
                     for (int i = 0; i < intersectionResults.Size; i++)
                     {
                         XYZ intersectionPoint = intersectionResults.get_Item(i).XYZPoint;
                         double param = (intersectionPoint - start).DotProduct(dir);
                         
-                        if (param <= minParam)
+                        // Проверяем, находится ли точка пересечения близко к концам стены
+                        // Если да - это нормальное продление, не обрезаем
+                        const double endTolerance = 0.5; // 50 см от конца - допуск для продления
+                        bool nearStart = param < endTolerance;
+                        bool nearEnd = param > (line.Length - endTolerance);
+                        
+                        // Если пересечение близко к концу - это продление, не обрезаем
+                        if (nearStart || nearEnd)
                         {
-                            minParam = param;
+                            continue; // Пропускаем это пересечение - это нормальное продление
                         }
-                        else if (param >= maxParam)
-                        {
-                            maxParam = param;
-                        }
-                        // Если точка пересечения внутри кривой, обрезаем до неё
-                        else
+                        
+                        // Только если пересечение внутри стены (не на концах) - обрезаем
+                        if (param > minParam && param < maxParam)
                         {
                             // Определяем, с какой стороны обрезать
                             // Обрезаем ту сторону, которая ближе к точке пересечения
@@ -2175,6 +2180,8 @@ private static Curve TrimCurveAgainstExistingWalls(Document doc, Curve curve, Wa
                                 maxParam = param;
                             }
                         }
+                        // Если точка пересечения за пределами стены (param <= minParam или param >= maxParam)
+                        // и она не близко к концу - это может быть проблемой, но не обрезаем продление
                     }
                 }
             }
