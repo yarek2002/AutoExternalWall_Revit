@@ -1558,7 +1558,16 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
     {
         // ВСЕГДА используем геометрическую формулу для правильного расчета продления
         // Формула с tan(angle/2) корректно работает для всех углов (острых и тупых)
-        return CalculateExtensionLengthGeometric(sourceWall, adjacentWall, endIndex);
+        double extension = CalculateExtensionLengthGeometric(sourceWall, adjacentWall, endIndex);
+        
+        // Логируем для отладки
+        Document doc = sourceWall.Document;
+        if (doc != null)
+        {
+            Log(doc, $"CalculateExtensionLength: стена {sourceWall.Id}, примыкающая {adjacentWall.Id}, конец {endIndex}, продление {extension:F3}");
+        }
+        
+        return extension;
     }
     catch
     {
@@ -1605,7 +1614,8 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         // ⚠️ ОБЯЗАТЕЛЬНО зажимаем dotProduct перед Math.Acos, чтобы избежать NaN
         double dotProduct = sourceDir.DotProduct(adjacentDir);
         dotProduct = Math.Min(1.0, Math.Max(-1.0, dotProduct));
-        double angle = Math.Acos(dotProduct);
+        double angleBeforeCorrection = Math.Acos(dotProduct);
+        double angle = angleBeforeCorrection;
         
         // ⚠️ КРИТИЧЕСКИ ВАЖНО: определяем тип угла (выпуклый/вогнутый)
         // Определяем знак относительно нормали плоскости контура
@@ -1623,9 +1633,25 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
             angle = Math.PI - angle;
         }
         
+        // Логируем для отладки
+        Document doc = sourceWall.Document;
+        if (doc != null)
+        {
+            double angleDegreesBefore = angleBeforeCorrection * 180.0 / Math.PI;
+            double angleDegrees = angle * 180.0 / Math.PI;
+            Log(doc, $"CalculateExtensionLengthGeometric: стена {sourceWall.Id}, примыкающая {adjacentWall.Id}, конец {endIndex}");
+            Log(doc, $"  Угол до коррекции: {angleDegreesBefore:F1}°, после коррекции: {angleDegrees:F1}°, вогнутый: {isConcave}");
+            Log(doc, $"  sourceDir: ({sourceDir.X:F3}, {sourceDir.Y:F3}), adjacentDir: ({adjacentDir.X:F3}, {adjacentDir.Y:F3})");
+            Log(doc, $"  crossProduct.Z: {crossProduct.Z:F3}, dotProduct с normal: {crossProduct.DotProduct(normal):F3}");
+        }
+        
         // Если угол очень мал (стены почти параллельны) или очень большой (почти противоположны)
         if (angle < 0.1 || angle > Math.PI - 0.1)
         {
+            if (doc != null)
+            {
+                Log(doc, $"  Угол слишком мал/велик, возвращаем halfThickness");
+            }
             return GetWallThickness(sourceWall) / 2.0;
         }
 
@@ -1642,6 +1668,10 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         if (tanHalf < 1e-6)
         {
             // Угол слишком мал или близок к 0/180 - стены почти параллельны
+            if (doc != null)
+            {
+                Log(doc, $"  tanHalf слишком мал ({tanHalf:E3}), возвращаем halfThickness");
+            }
             return sourceHalfThickness;
         }
 
@@ -1652,7 +1682,17 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         // Ограничиваем максимальное продление разумным значением
         // При очень малых углах tan(angle/2) стремится к 0, что дает огромное продление
         double maxExtension = (sourceHalfThickness + adjacentHalfThickness) * 50.0; // разумный предел для очень острых углов
-        return Math.Min(extension, maxExtension);
+        double finalExtension = Math.Min(extension, maxExtension);
+        
+        // Логируем результат
+        if (doc != null)
+        {
+            Log(doc, $"  Толщины: source={sourceHalfThickness * 2:F3}, adjacent={adjacentHalfThickness * 2:F3}");
+            Log(doc, $"  halfAngle={halfAngle * 180.0 / Math.PI:F1}°, tanHalf={tanHalf:F3}");
+            Log(doc, $"  Продление: {extension:F3}, ограничено до: {finalExtension:F3}");
+        }
+        
+        return finalExtension;
     }
     catch
     {
