@@ -1714,7 +1714,6 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         }
         
         // Логируем для отладки
-        Document doc = sourceWall.Document;
         if (doc != null)
         {
             double angleDegreesBefore = angleBeforeCorrection * 180.0 / Math.PI;
