@@ -1433,14 +1433,38 @@ namespace Revit_AutoExternalWall.Utilities
 
 private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
 {
+    Document doc = sourceWall?.Document;
+    if (doc != null)
+    {
+        Log(doc, $"=== ExtendToWallEnds ВЫЗВАНА: sourceWall={sourceWall?.Id}");
+    }
+    
     if (!(curve is Line line))
+    {
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: кривая не Line");
+        }
         return curve;
+    }
 
     if (!(sourceWall.Location is LocationCurve lc))
+    {
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: Location не LocationCurve");
+        }
         return curve;
+    }
 
     if (!(lc.Curve is Line axis))
+    {
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: Curve не Line");
+        }
         return curve;
+    }
 
     XYZ axisStart = axis.GetEndPoint(0);
     XYZ axisEnd = axis.GetEndPoint(1);
@@ -1451,6 +1475,11 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
     Wall adjacentWall0 = FindAdjacentWallAtEnd(sourceWall, 0);
     Wall adjacentWall1 = FindAdjacentWallAtEnd(sourceWall, 1);
 
+    if (doc != null)
+    {
+        Log(doc, $"ExtendToWallEnds: adjacentWall0={adjacentWall0?.Id}, adjacentWall1={adjacentWall1?.Id}");
+    }
+
     XYZ p0 = line.GetEndPoint(0);
     XYZ p1 = line.GetEndPoint(1);
 
@@ -1458,10 +1487,18 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
     if (adjacentWall0 != null)
     {
         double extension0 = CalculateExtensionLength(sourceWall, adjacentWall0, 0);
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: начало - extension0={extension0:F3}");
+        }
         p0 = p0 - dir * extension0;
     }
     else
     {
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: начало - adjacentWall0=null, используем halfWidth={halfWidth:F3}");
+        }
         p0 = p0 - dir * halfWidth;
     }
 
@@ -1469,10 +1506,18 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
     if (adjacentWall1 != null)
     {
         double extension1 = CalculateExtensionLength(sourceWall, adjacentWall1, 1);
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: конец - extension1={extension1:F3}");
+        }
         p1 = p1 + dir * extension1;
     }
     else
     {
+        if (doc != null)
+        {
+            Log(doc, $"ExtendToWallEnds: конец - adjacentWall1=null, используем halfWidth={halfWidth:F3}");
+        }
         p1 = p1 + dir * halfWidth;
     }
 
@@ -1549,8 +1594,18 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 /// </summary>
 private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
+    Document doc = sourceWall?.Document;
+    if (doc != null)
+    {
+        Log(doc, $"=== CalculateExtensionLength ВЫЗВАНА: sourceWall={sourceWall?.Id}, adjacentWall={adjacentWall?.Id}, endIndex={endIndex}");
+    }
+    
     if (sourceWall == null || adjacentWall == null)
     {
+        if (doc != null)
+        {
+            Log(doc, $"CalculateExtensionLength: одна из стен null, возвращаем halfThickness");
+        }
         return GetWallThickness(sourceWall) / 2.0;
     }
 
@@ -1561,16 +1616,19 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
         double extension = CalculateExtensionLengthGeometric(sourceWall, adjacentWall, endIndex);
         
         // Логируем для отладки
-        Document doc = sourceWall.Document;
         if (doc != null)
         {
-            Log(doc, $"CalculateExtensionLength: стена {sourceWall.Id}, примыкающая {adjacentWall.Id}, конец {endIndex}, продление {extension:F3}");
+            Log(doc, $"CalculateExtensionLength РЕЗУЛЬТАТ: стена {sourceWall.Id}, примыкающая {adjacentWall.Id}, конец {endIndex}, продление {extension:F3}");
         }
         
         return extension;
     }
-    catch
+    catch (Exception ex)
     {
+        if (doc != null)
+        {
+            Log(doc, $"CalculateExtensionLength ОШИБКА: {ex.Message}");
+        }
         return GetWallThickness(sourceWall) / 2.0;
     }
 }
@@ -1581,8 +1639,18 @@ private static double CalculateExtensionLength(Wall sourceWall, Wall adjacentWal
 /// </summary>
 private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall adjacentWall, int endIndex)
 {
+    Document doc = sourceWall?.Document;
+    if (doc != null)
+    {
+        Log(doc, $"=== CalculateExtensionLengthGeometric ВЫЗВАНА: sourceWall={sourceWall?.Id}, adjacentWall={adjacentWall?.Id}, endIndex={endIndex}");
+    }
+    
     if (sourceWall == null || adjacentWall == null)
     {
+        if (doc != null)
+        {
+            Log(doc, $"CalculateExtensionLengthGeometric: одна из стен null");
+        }
         return GetWallThickness(sourceWall) / 2.0;
     }
 
@@ -1592,10 +1660,22 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         LocationCurve adjacentLocation = adjacentWall.Location as LocationCurve;
         
         if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
+        {
+            if (doc != null)
+            {
+                Log(doc, $"CalculateExtensionLengthGeometric: sourceLocation не Line");
+            }
             return GetWallThickness(sourceWall) / 2.0;
+        }
         
         if (adjacentLocation == null || !(adjacentLocation.Curve is Line adjacentAxis))
+        {
+            if (doc != null)
+            {
+                Log(doc, $"CalculateExtensionLengthGeometric: adjacentLocation не Line");
+            }
             return GetWallThickness(sourceWall) / 2.0;
+        }
 
         XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
