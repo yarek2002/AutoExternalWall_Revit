@@ -1431,7 +1431,7 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
 
-private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
+private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve, IList<IList<BoundarySegment>> boundaryLoops = null)
 {
     Document doc = sourceWall?.Document;
     if (doc != null)
@@ -1472,8 +1472,9 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
     double halfWidth = GetWallThickness(sourceWall) / 2.0;
 
     // Находим примыкающие стены в углах
-    Wall adjacentWall0 = FindAdjacentWallAtEnd(sourceWall, 0);
-    Wall adjacentWall1 = FindAdjacentWallAtEnd(sourceWall, 1);
+    // ПРИОРИТЕТ: используем boundaryLoops если доступны (более точный метод)
+    Wall adjacentWall0 = FindAdjacentWallAtEnd(sourceWall, 0, boundaryLoops);
+    Wall adjacentWall1 = FindAdjacentWallAtEnd(sourceWall, 1, boundaryLoops);
 
     if (doc != null)
     {
@@ -1526,8 +1527,10 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
 
         /// <summary>
 /// Находит примыкающую стену в указанном конце исходной стены
+/// ПРИОРИТЕТ 1: через контур комнаты (boundaryLoops) - более точный метод
+/// ПРИОРИТЕТ 2: через JoinGeometryUtils - для уже соединенных стен
         /// </summary>
-private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
+private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex, IList<IList<BoundarySegment>> boundaryLoops = null)
 {
     if (sourceWall == null || sourceWall.Document == null)
         return null;
@@ -1542,7 +1545,23 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
         if (endIndex == 0) sourceDir = -sourceDir; // Для начала берем обратное направление
 
-        // Ищем примыкающие стены через JoinGeometryUtils
+        // ПРИОРИТЕТ 1: Если есть контур комнаты, ищем через соседние сегменты контура
+        // Это более точный метод, так как использует геометрию контура комнаты
+        if (boundaryLoops != null)
+        {
+            Wall adjacentWall = FindAdjacentWallFromBoundaryLoops(sourceWall, endIndex, boundaryLoops);
+            if (adjacentWall != null)
+            {
+                Document doc = sourceWall.Document;
+                if (doc != null)
+                {
+                    Log(doc, $"FindAdjacentWallAtEnd: найдена через boundaryLoops: стена {adjacentWall.Id}, конец {endIndex}");
+                }
+                return adjacentWall;
+            }
+        }
+
+        // ПРИОРИТЕТ 2: Если не нашли через контур, используем JoinGeometryUtils (старый метод)
         var joined = JoinGeometryUtils.GetJoinedElements(sourceWall.Document, sourceWall);
         if (joined == null)
             return null;
@@ -1579,10 +1598,139 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
             }
         }
 
+        if (closestWall != null)
+        {
+            Document doc = sourceWall.Document;
+            if (doc != null)
+            {
+                Log(doc, $"FindAdjacentWallAtEnd: найдена через JoinGeometryUtils: стена {closestWall.Id}, конец {endIndex}");
+            }
+        }
+
         return closestWall;
     }
     catch
     {
+        return null;
+    }
+}
+
+/// <summary>
+/// Находит примыкающую стену через контур комнаты (boundaryLoops)
+/// Ищет соседние сегменты в контуре, которые примыкают к указанному концу стены
+/// </summary>
+private static Wall FindAdjacentWallFromBoundaryLoops(
+    Wall sourceWall, int endIndex, IList<IList<BoundarySegment>> boundaryLoops)
+{
+    if (sourceWall == null || sourceWall.Document == null || boundaryLoops == null)
+        return null;
+
+    try
+    {
+        LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
+        if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
+            return null;
+
+        XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
+        const double tolerance = 0.1; // 10 см
+
+        // Ищем во всех контурах
+        foreach (IList<BoundarySegment> loop in boundaryLoops)
+        {
+            // Ищем сегмент текущей стены в контуре
+            int sourceIndex = -1;
+            for (int i = 0; i < loop.Count; i++)
+            {
+                if (loop[i].ElementId == sourceWall.Id)
+                {
+                    sourceIndex = i;
+                    break;
+                }
+            }
+
+            if (sourceIndex < 0)
+                continue; // Эта стена не в этом контуре
+
+            // Проверяем соседние сегменты в контуре
+            // Предыдущий сегмент (может быть примыкающим к началу стены)
+            if (endIndex == 0)
+            {
+                // Предыдущий сегмент в контуре
+                int prevIndex = sourceIndex > 0 ? sourceIndex - 1 : loop.Count - 1;
+                if (prevIndex != sourceIndex)
+                {
+                    BoundarySegment prevSegment = loop[prevIndex];
+                    Element prevElement = sourceWall.Document.GetElement(prevSegment.ElementId);
+                    if (prevElement is Wall prevWall && prevWall.Id != sourceWall.Id)
+                    {
+                        Curve prevCurve = prevSegment.GetCurve();
+                        if (prevCurve != null)
+                        {
+                            // Проверяем оба конца предыдущего сегмента
+                            XYZ prevStart = prevCurve.GetEndPoint(0);
+                            XYZ prevEnd = prevCurve.GetEndPoint(1);
+                            double distToStart = sourceEndPoint.DistanceTo(prevStart);
+                            double distToEnd = sourceEndPoint.DistanceTo(prevEnd);
+                            double minDist = Math.Min(distToStart, distToEnd);
+                            
+                            if (minDist < tolerance)
+                            {
+                                Document doc = sourceWall.Document;
+                                if (doc != null)
+                                {
+                                    Log(doc, $"FindAdjacentWallFromBoundaryLoops: найдена примыкающая стена {prevWall.Id} к началу (расстояние {minDist:F3})");
+                                }
+                                return prevWall;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Следующий сегмент (может быть примыкающим к концу стены)
+            if (endIndex == 1)
+            {
+                int nextIndex = (sourceIndex + 1) % loop.Count;
+                if (nextIndex != sourceIndex)
+                {
+                    BoundarySegment nextSegment = loop[nextIndex];
+                    Element nextElement = sourceWall.Document.GetElement(nextSegment.ElementId);
+                    if (nextElement is Wall nextWall && nextWall.Id != sourceWall.Id)
+                    {
+                        Curve nextCurve = nextSegment.GetCurve();
+                        if (nextCurve != null)
+                        {
+                            // Проверяем оба конца следующего сегмента
+                            XYZ nextStart = nextCurve.GetEndPoint(0);
+                            XYZ nextEnd = nextCurve.GetEndPoint(1);
+                            double distToStart = sourceEndPoint.DistanceTo(nextStart);
+                            double distToEnd = sourceEndPoint.DistanceTo(nextEnd);
+                            double minDist = Math.Min(distToStart, distToEnd);
+                            
+                            if (minDist < tolerance)
+                            {
+                                Document doc = sourceWall.Document;
+                                if (doc != null)
+                                {
+                                    Log(doc, $"FindAdjacentWallFromBoundaryLoops: найдена примыкающая стена {nextWall.Id} к концу (расстояние {minDist:F3})");
+                                }
+                                return nextWall;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+    catch (Exception ex)
+    {
+        Document doc = sourceWall?.Document;
+        if (doc != null)
+        {
+            Log(doc, $"FindAdjacentWallFromBoundaryLoops ОШИБКА: {ex.Message}");
+        }
         return null;
     }
 }
@@ -2463,6 +2611,10 @@ private static Curve ExtendCurveToJoinedWalls(
                 // Собираем все стены и их boundary segments от всех помещений
                 Dictionary<ElementId, List<BoundarySegmentData>> segmentsByWall = 
                     new Dictionary<ElementId, List<BoundarySegmentData>>();
+                
+                // Сохраняем boundaryLoops для каждой комнаты для использования в ExtendToWallEnds
+                Dictionary<ElementId, IList<IList<BoundarySegment>>> boundaryLoopsByRoom = 
+                    new Dictionary<ElementId, IList<IList<BoundarySegment>>>();
 
                 SpatialElementBoundaryOptions options = new SpatialElementBoundaryOptions();
 
@@ -2470,6 +2622,9 @@ private static Curve ExtendCurveToJoinedWalls(
                 {
                     IList<IList<BoundarySegment>> boundaryLoops = room.GetBoundarySegments(options);
                     if (boundaryLoops == null) continue;
+                    
+                    // Сохраняем boundaryLoops для этой комнаты
+                    boundaryLoopsByRoom[room.Id] = boundaryLoops;
 
                     foreach (IList<BoundarySegment> loop in boundaryLoops)
                     {
@@ -2615,7 +2770,14 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Растягиваем только если край является концом исходной стены, а не точкой разделения
                         if (startIsWallEnd || endIsWallEnd)
                         {
-                            externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                            // Получаем boundaryLoops для комнаты этого сегмента
+                            IList<IList<BoundarySegment>> segmentBoundaryLoops = null;
+                            if (segment.Room != null && boundaryLoopsByRoom.ContainsKey(segment.Room.Id))
+                            {
+                                segmentBoundaryLoops = boundaryLoopsByRoom[segment.Room.Id];
+                            }
+                            
+                            externalCurve = ExtendToWallEnds(innerWall, externalCurve, segmentBoundaryLoops);
                             externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
                             
                             // Если начало - точка разделения, обрезаем его обратно
@@ -4340,7 +4502,8 @@ private static Curve ExtendCurveToJoinedWalls(
                     }
                     
                     // Дотягиваем до торцов исходной стены (учёт её толщины и примыканий)
-                    externalCurve = ExtendToWallEnds(innerWall, externalCurve);
+                    // Передаем boundaryLoops для более точного определения примыкающих стен
+                    externalCurve = ExtendToWallEnds(innerWall, externalCurve, boundaryLoops);
                     externalCurve = ExtendCurveToJoinedWalls(innerWall, externalCurve);
 
                     if (externalCurve == null || externalCurve.Length < 0.01)
