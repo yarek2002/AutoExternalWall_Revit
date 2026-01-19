@@ -3681,6 +3681,9 @@ private static Curve ExtendCurveToJoinedWalls(
                                         }
                                     }
 
+                                    // Копируем параметры ширины и высоты окна из исходного окна
+                                    CopyWindowDimensions(doc, opening, newOpening);
+
                                     // Устанавливаем параметр ADSK_Зона для окна/двери
                                     SetZoneParameter(doc, newOpening, bestExternalWall);
 
@@ -3708,6 +3711,198 @@ private static Curve ExtendCurveToJoinedWalls(
             }
 
             return copiedCount;
+        }
+
+        /// <summary>
+        /// Копирует параметры ширины и высоты окна/двери из исходного экземпляра в новый
+        /// Также проверяет размеры через BoundingBox для дополнительной валидации
+        /// </summary>
+        private static void CopyWindowDimensions(Document doc, FamilyInstance source, FamilyInstance target)
+        {
+            try
+            {
+                // Получаем размеры из BoundingBox исходного окна
+                BoundingBoxXYZ sourceBbox = source.get_BoundingBox(null);
+                double sourceWidth = 0;
+                double sourceHeight = 0;
+                
+                if (sourceBbox != null)
+                {
+                    // Вычисляем ширину и высоту из BoundingBox
+                    // Ширина - это размер вдоль стены (в плоскости XY)
+                    // Высота - это размер по вертикали (Z)
+                    LocationCurve sourceLocation = source.Location as LocationCurve;
+                    if (sourceLocation != null && sourceLocation.Curve != null)
+                    {
+                        // Для окон с LocationCurve ширина определяется по длине кривой
+                        sourceWidth = sourceLocation.Curve.Length;
+                    }
+                    else
+                    {
+                        // Для окон с LocationPoint ширина определяется из BoundingBox
+                        double dx = sourceBbox.Max.X - sourceBbox.Min.X;
+                        double dy = sourceBbox.Max.Y - sourceBbox.Min.Y;
+                        sourceWidth = Math.Max(dx, dy);
+                    }
+                    sourceHeight = sourceBbox.Max.Z - sourceBbox.Min.Z;
+                }
+
+                // Пытаемся скопировать параметры ширины и высоты
+                // Сначала пробуем BuiltInParameter, затем имена параметров
+                bool widthCopied = false;
+                bool heightCopied = false;
+
+                // Пробуем скопировать ширину через BuiltInParameter
+                try
+                {
+                    Parameter sourceWidthParam = source.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
+                    if (sourceWidthParam != null && sourceWidthParam.HasValue && !sourceWidthParam.IsReadOnly)
+                    {
+                        Parameter targetWidthParam = target.get_Parameter(BuiltInParameter.FAMILY_WIDTH_PARAM);
+                        if (targetWidthParam != null && !targetWidthParam.IsReadOnly && sourceWidthParam.StorageType == StorageType.Double)
+                        {
+                            double widthValue = sourceWidthParam.AsDouble();
+                            targetWidthParam.Set(widthValue);
+                            widthCopied = true;
+                            Log(doc, $"Скопирована ширина окна: {widthValue:F3} (BuiltInParameter.FAMILY_WIDTH_PARAM)");
+                        }
+                    }
+                }
+                catch { }
+
+                // Если не получилось через BuiltInParameter, пробуем по именам
+                if (!widthCopied)
+                {
+                    string[] widthParamNames = { "Width", "Ширина", "Default Width", "Ширина по умолчанию" };
+                    foreach (string paramName in widthParamNames)
+                    {
+                        Parameter sourceWidthParam = source.LookupParameter(paramName);
+                        if (sourceWidthParam != null && sourceWidthParam.HasValue && !sourceWidthParam.IsReadOnly)
+                        {
+                            Parameter targetWidthParam = target.LookupParameter(paramName);
+                            if (targetWidthParam != null && !targetWidthParam.IsReadOnly)
+                            {
+                                try
+                                {
+                                    if (sourceWidthParam.StorageType == StorageType.Double)
+                                    {
+                                        double widthValue = sourceWidthParam.AsDouble();
+                                        targetWidthParam.Set(widthValue);
+                                        widthCopied = true;
+                                        Log(doc, $"Скопирована ширина окна: {widthValue:F3} (параметр: {paramName})");
+                                        break;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log(doc, $"Не удалось скопировать ширину через параметр {paramName}: {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Пробуем скопировать высоту через BuiltInParameter
+                try
+                {
+                    Parameter sourceHeightParam = source.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
+                    if (sourceHeightParam != null && sourceHeightParam.HasValue && !sourceHeightParam.IsReadOnly)
+                    {
+                        Parameter targetHeightParam = target.get_Parameter(BuiltInParameter.FAMILY_HEIGHT_PARAM);
+                        if (targetHeightParam != null && !targetHeightParam.IsReadOnly && sourceHeightParam.StorageType == StorageType.Double)
+                        {
+                            double heightValue = sourceHeightParam.AsDouble();
+                            targetHeightParam.Set(heightValue);
+                            heightCopied = true;
+                            Log(doc, $"Скопирована высота окна: {heightValue:F3} (BuiltInParameter.FAMILY_HEIGHT_PARAM)");
+                        }
+                    }
+                }
+                catch { }
+
+                // Если не получилось через BuiltInParameter, пробуем по именам
+                if (!heightCopied)
+                {
+                    string[] heightParamNames = { "Height", "Высота", "Default Height", "Высота по умолчанию" };
+                    foreach (string paramName in heightParamNames)
+                    {
+                        Parameter sourceHeightParam = source.LookupParameter(paramName);
+                        if (sourceHeightParam != null && sourceHeightParam.HasValue && !sourceHeightParam.IsReadOnly)
+                        {
+                            Parameter targetHeightParam = target.LookupParameter(paramName);
+                            if (targetHeightParam != null && !targetHeightParam.IsReadOnly)
+                            {
+                                try
+                                {
+                                    if (sourceHeightParam.StorageType == StorageType.Double)
+                                    {
+                                        double heightValue = sourceHeightParam.AsDouble();
+                                        targetHeightParam.Set(heightValue);
+                                        heightCopied = true;
+                                        Log(doc, $"Скопирована высота окна: {heightValue:F3} (параметр: {paramName})");
+                                        break;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log(doc, $"Не удалось скопировать высоту через параметр {paramName}: {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Проверяем размеры через BoundingBox после копирования параметров
+                doc.Regenerate();
+                BoundingBoxXYZ targetBbox = target.get_BoundingBox(null);
+                
+                if (sourceBbox != null && targetBbox != null)
+                {
+                    double targetWidth = 0;
+                    double targetHeight = 0;
+                    
+                    LocationCurve targetLocation = target.Location as LocationCurve;
+                    if (targetLocation != null && targetLocation.Curve != null)
+                    {
+                        targetWidth = targetLocation.Curve.Length;
+                    }
+                    else
+                    {
+                        double dx = targetBbox.Max.X - targetBbox.Min.X;
+                        double dy = targetBbox.Max.Y - targetBbox.Min.Y;
+                        targetWidth = Math.Max(dx, dy);
+                    }
+                    targetHeight = targetBbox.Max.Z - targetBbox.Min.Z;
+
+                    // Проверяем совпадение размеров с допуском 1 мм (0.003 фута)
+                    const double tolerance = 0.003;
+                    bool widthMatches = Math.Abs(sourceWidth - targetWidth) < tolerance;
+                    bool heightMatches = Math.Abs(sourceHeight - targetHeight) < tolerance;
+
+                    if (!widthMatches || !heightMatches)
+                    {
+                        Log(doc, $"⚠️ Размеры окна не совпадают! Исходное: ширина={sourceWidth:F3}, высота={sourceHeight:F3}; " +
+                            $"Новое: ширина={targetWidth:F3}, высота={targetHeight:F3}");
+                        
+                        if (!widthCopied)
+                        {
+                            Log(doc, $"Ширина не была скопирована через параметры. Разница: {Math.Abs(sourceWidth - targetWidth):F3}");
+                        }
+                        if (!heightCopied)
+                        {
+                            Log(doc, $"Высота не была скопирована через параметры. Разница: {Math.Abs(sourceHeight - targetHeight):F3}");
+                        }
+                    }
+                    else
+                    {
+                        Log(doc, $"✓ Размеры окна совпадают: ширина={targetWidth:F3}, высота={targetHeight:F3}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(doc, $"Ошибка при копировании размеров окна: {ex.Message}");
+            }
         }
 
         /// <summary>
