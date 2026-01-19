@@ -3093,8 +3093,10 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Находим ближайшую точку на стене
                         try
                         {
-                            double param = wallCurve.Project(openingPoint).Parameter;
-                            XYZ pointOnWall = wallCurve.Evaluate(param, true);
+                            IntersectionResult proj = wallCurve.Project(openingPoint);
+                            double param = proj.Parameter;
+                            // ВАЖНО: false - param это натуральный параметр (не нормализованный 0..1)
+                            XYZ pointOnWall = wallCurve.Evaluate(param, false);
                             
                             // Вычисляем направление от стены к окну/двери
                             XYZ direction = (openingPoint - pointOnWall).Normalize();
@@ -3590,8 +3592,11 @@ private static Curve ExtendCurveToJoinedWalls(
                             {
                                 // Проецируем абсолютную позицию окна на кривую внешней стены
                                 // Это даст точку на оси внешней стены, ближайшую к реальной позиции окна
-                                double param = candidateCurve.Project(openingAbsolutePosition).Parameter;
-                                XYZ candidatePointOnCurve = candidateCurve.Evaluate(param, true);
+                                IntersectionResult proj = candidateCurve.Project(openingAbsolutePosition);
+                                double param = proj.Parameter;
+                                
+                                // ВАЖНО: false - param это натуральный параметр (не нормализованный 0..1)
+                                XYZ candidatePointOnCurve = candidateCurve.Evaluate(param, false);
                                 
                                 // Сохраняем Z-координату (высоту) из исходного окна
                                 XYZ candidatePoint = new XYZ(
