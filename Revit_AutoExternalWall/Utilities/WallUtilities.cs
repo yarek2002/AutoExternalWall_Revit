@@ -1611,8 +1611,9 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
                 .OfClass(typeof(Wall))
                 .Cast<Wall>();
 
-            const double searchRadius = 1.0; // 1 метр - радиус поиска
-            const double tolerance = 0.1; // 10 см - точность совпадения
+            // УЖЕСТОЧЕННЫЕ критерии поиска: ищем только действительно примыкающие стены
+            const double searchRadius = 0.3; // 30 см - радиус поиска (уменьшен с 1 метра)
+            const double tolerance = 0.05; // 5 см - точность совпадения (уменьшена с 10 см)
 
             foreach (var other in allWalls)
             {
@@ -1626,36 +1627,49 @@ private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
                 XYZ otherStart = otherAxis.GetEndPoint(0);
                 XYZ otherEnd = otherAxis.GetEndPoint(1);
                 
-                // Проверяем расстояние от конца исходной стены до концов другой стены
+                // КРИТИЧНО: проверяем расстояние от конца исходной стены до КОНЦОВ другой стены
+                // Стены должны действительно примыкать концами, а не просто быть близко
                 double distToStart = sourceEndPoint.DistanceTo(otherStart);
                 double distToEnd = sourceEndPoint.DistanceTo(otherEnd);
                 double minDist = Math.Min(distToStart, distToEnd);
 
-                // Также проверяем расстояние до самой линии другой стены
+                // Проверяем расстояние до самой линии другой стены (для случая, когда стена проходит через конец)
                 IntersectionResult proj = otherAxis.Project(sourceEndPoint);
                 double distToLine = proj != null ? proj.Distance : double.MaxValue;
-                minDist = Math.Min(minDist, distToLine);
+                
+                // Используем минимальное расстояние, но приоритет отдаем расстоянию до концов
+                double effectiveDist = Math.Min(minDist, distToLine);
 
                 // Проверяем, что стены не параллельны (должны образовывать угол)
                 XYZ otherDir = (otherEnd - otherStart).Normalize();
-                double dotProduct = Math.Abs(sourceDir.DotProduct(otherDir));
-                bool isParallel = dotProduct > 0.95; // Почти параллельны (cos < 5°)
+                double dotProduct = sourceDir.DotProduct(otherDir);
+                double absDotProduct = Math.Abs(dotProduct);
+                bool isParallel = absDotProduct > 0.95; // Почти параллельны (cos < 5°)
 
-                if (minDist < searchRadius && minDist < minDistance && !isParallel)
+                // УЖЕСТОЧЕННАЯ ПРОВЕРКА: стены должны быть очень близко (в пределах tolerance)
+                // И не параллельны, и образовывать разумный угол
+                if (effectiveDist < tolerance && effectiveDist < minDistance && !isParallel)
                 {
                     // Дополнительная проверка: стены должны образовывать угол
                     // Вычисляем угол между направлениями
-                    double angle = Math.Acos(Math.Min(1.0, Math.Max(-1.0, dotProduct)));
+                    dotProduct = Math.Min(1.0, Math.Max(-1.0, dotProduct));
+                    double angle = Math.Acos(dotProduct);
                     double angleDegrees = angle * 180.0 / Math.PI;
 
-                    // Принимаем стены, которые образуют угол от 5° до 175°
-                    if (angleDegrees > 5.0 && angleDegrees < 175.0)
+                    // Принимаем стены, которые образуют угол от 15° до 165° (ужесточено с 5°-175°)
+                    // Это исключает почти параллельные и почти противоположные стены
+                    if (angleDegrees > 15.0 && angleDegrees < 165.0)
                     {
-                        minDistance = minDist;
-                        closestWall = other;
-                        if (doc != null)
+                        // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: конец другой стены должен быть очень близко к концу исходной
+                        // Это гарантирует, что стены действительно примыкают, а не просто близко расположены
+                        if (minDist < tolerance)
                         {
-                            Log(doc, $"FindAdjacentWallAtEnd: найдена через геометрический поиск: стена {other.Id}, расстояние {minDist:F3}, угол {angleDegrees:F1}°");
+                            minDistance = effectiveDist;
+                            closestWall = other;
+                            if (doc != null)
+                            {
+                                Log(doc, $"FindAdjacentWallAtEnd: найдена через геометрический поиск: стена {other.Id}, расстояние до концов {minDist:F3}, до линии {distToLine:F3}, угол {angleDegrees:F1}°");
+                            }
                         }
                     }
                 }
@@ -1852,15 +1866,28 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         
         // Ограничиваем максимальное продление разумным значением
         // При очень малых углах tan(angle/2) стремится к 0, что дает огромное продление
-        double maxExtension = (sourceHalfThickness + adjacentHalfThickness) * 50.0; // разумный предел для очень острых углов
-        double finalExtension = Math.Min(extension, maxExtension);
+        // Используем более консервативное ограничение: максимум 1 метр продления
+        const double maxReasonableExtension = 1.0; // 1 метр - максимальное разумное продление
+        double finalExtension = Math.Min(extension, maxReasonableExtension);
+        
+        // Дополнительная проверка: если продление получилось слишком большим относительно толщины стен,
+        // возможно, угол определен неправильно - используем просто halfThickness
+        double thicknessRatio = finalExtension / (sourceHalfThickness + adjacentHalfThickness);
+        if (thicknessRatio > 20.0) // Если продление больше 20x от толщины - что-то не так
+        {
+            if (doc != null)
+            {
+                Log(doc, $"  ⚠️ Продление слишком большое (ratio={thicknessRatio:F1}), используем halfThickness вместо {finalExtension:F3}");
+            }
+            return sourceHalfThickness;
+        }
         
         // Логируем результат
         if (doc != null)
         {
             Log(doc, $"  Толщины: source={sourceHalfThickness * 2:F3}, adjacent={adjacentHalfThickness * 2:F3}");
             Log(doc, $"  halfAngle={halfAngle * 180.0 / Math.PI:F1}°, tanHalf={tanHalf:F3}");
-            Log(doc, $"  Продление: {extension:F3}, ограничено до: {finalExtension:F3}");
+            Log(doc, $"  Продление: {extension:F3}, ограничено до: {finalExtension:F3}, ratio={thicknessRatio:F1}");
         }
         
         return finalExtension;
