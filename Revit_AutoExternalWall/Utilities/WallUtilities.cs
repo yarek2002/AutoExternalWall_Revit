@@ -1526,169 +1526,63 @@ private static Curve ExtendToWallEnds(Wall sourceWall, Curve curve)
 
         /// <summary>
 /// Находит примыкающую стену в указанном конце исходной стены
-/// Ищет среди всех стен в документе по геометрической близости
         /// </summary>
 private static Wall FindAdjacentWallAtEnd(Wall sourceWall, int endIndex)
 {
-    Document doc = sourceWall?.Document;
-    if (sourceWall == null || doc == null)
+    if (sourceWall == null || sourceWall.Document == null)
         return null;
 
     try
     {
         LocationCurve sourceLocation = sourceWall.Location as LocationCurve;
         if (sourceLocation == null || !(sourceLocation.Curve is Line sourceAxis))
-        {
-            if (doc != null)
-            {
-                Log(doc, $"FindAdjacentWallAtEnd: sourceLocation не Line для стены {sourceWall.Id}");
-            }
             return null;
-        }
 
         XYZ sourceEndPoint = (endIndex == 0) ? sourceAxis.GetEndPoint(0) : sourceAxis.GetEndPoint(1);
         XYZ sourceDir = (sourceAxis.GetEndPoint(1) - sourceAxis.GetEndPoint(0)).Normalize();
         if (endIndex == 0) sourceDir = -sourceDir; // Для начала берем обратное направление
 
-        if (doc != null)
-        {
-            Log(doc, $"FindAdjacentWallAtEnd: ищем примыкающую стену для стены {sourceWall.Id}, конец {endIndex}, точка ({sourceEndPoint.X:F3}, {sourceEndPoint.Y:F3})");
-        }
+        // Ищем примыкающие стены через JoinGeometryUtils
+        var joined = JoinGeometryUtils.GetJoinedElements(sourceWall.Document, sourceWall);
+        if (joined == null)
+            return null;
 
         double minDistance = double.MaxValue;
         Wall closestWall = null;
 
-        // Сначала пробуем найти через JoinGeometryUtils (быстрее)
-        var joined = JoinGeometryUtils.GetJoinedElements(doc, sourceWall);
-        int joinedCount = 0;
-        if (joined != null)
+        foreach (ElementId id in joined)
         {
-            joinedCount = joined.Count;
-            foreach (ElementId id in joined)
+            if (!(sourceWall.Document.GetElement(id) is Wall other))
+                continue;
+
+            if (!JoinGeometryUtils.AreElementsJoined(sourceWall.Document, sourceWall, other))
+                continue;
+
+            LocationCurve otherLocation = other.Location as LocationCurve;
+            if (otherLocation == null || !(otherLocation.Curve is Line otherAxis))
+                continue;
+
+            // Проверяем, находится ли конец другой стены близко к концу исходной
+            XYZ otherStart = otherAxis.GetEndPoint(0);
+            XYZ otherEnd = otherAxis.GetEndPoint(1);
+            
+            double distToStart = sourceEndPoint.DistanceTo(otherStart);
+            double distToEnd = sourceEndPoint.DistanceTo(otherEnd);
+
+            double minDist = Math.Min(distToStart, distToEnd);
+            const double tolerance = 0.1; // 10 см
+
+            if (minDist < tolerance && minDist < minDistance)
             {
-                if (!(doc.GetElement(id) is Wall other))
-                    continue;
-
-                if (!JoinGeometryUtils.AreElementsJoined(doc, sourceWall, other))
-                    continue;
-
-                LocationCurve otherLocation = other.Location as LocationCurve;
-                if (otherLocation == null || !(otherLocation.Curve is Line otherAxis))
-                    continue;
-
-                // Проверяем, находится ли конец другой стены близко к концу исходной
-                XYZ otherStart = otherAxis.GetEndPoint(0);
-                XYZ otherEnd = otherAxis.GetEndPoint(1);
-                
-                double distToStart = sourceEndPoint.DistanceTo(otherStart);
-                double distToEnd = sourceEndPoint.DistanceTo(otherEnd);
-
-                double minDist = Math.Min(distToStart, distToEnd);
-                const double tolerance = 0.1; // 10 см
-
-                if (minDist < tolerance && minDist < minDistance)
-                {
-                    minDistance = minDist;
-                    closestWall = other;
-                    if (doc != null)
-                    {
-                        Log(doc, $"FindAdjacentWallAtEnd: найдена через JoinGeometryUtils: стена {other.Id}, расстояние {minDist:F3}");
-                    }
-                }
+                minDistance = minDist;
+                closestWall = other;
             }
-        }
-
-        // Если не нашли через JoinGeometryUtils, ищем среди всех стен по геометрической близости
-        if (closestWall == null)
-        {
-            if (doc != null)
-            {
-                Log(doc, $"FindAdjacentWallAtEnd: не найдено через JoinGeometryUtils (joined={joinedCount}), ищем среди всех стен");
-            }
-
-            // Получаем все стены в документе
-            var allWalls = new FilteredElementCollector(doc)
-                .OfClass(typeof(Wall))
-                .Cast<Wall>();
-
-            // УЖЕСТОЧЕННЫЕ критерии поиска: ищем только действительно примыкающие стены
-            const double searchRadius = 0.3; // 30 см - радиус поиска (уменьшен с 1 метра)
-            const double tolerance = 0.05; // 5 см - точность совпадения (уменьшена с 10 см)
-
-            foreach (var other in allWalls)
-            {
-                if (other.Id == sourceWall.Id)
-                    continue; // Пропускаем саму исходную стену
-
-                LocationCurve otherLocation = other.Location as LocationCurve;
-                if (otherLocation == null || !(otherLocation.Curve is Line otherAxis))
-                    continue;
-
-                XYZ otherStart = otherAxis.GetEndPoint(0);
-                XYZ otherEnd = otherAxis.GetEndPoint(1);
-                
-                // КРИТИЧНО: проверяем расстояние от конца исходной стены до КОНЦОВ другой стены
-                // Стены должны действительно примыкать концами, а не просто быть близко
-                double distToStart = sourceEndPoint.DistanceTo(otherStart);
-                double distToEnd = sourceEndPoint.DistanceTo(otherEnd);
-                double minDist = Math.Min(distToStart, distToEnd);
-
-                // Проверяем расстояние до самой линии другой стены (для случая, когда стена проходит через конец)
-                IntersectionResult proj = otherAxis.Project(sourceEndPoint);
-                double distToLine = proj != null ? proj.Distance : double.MaxValue;
-                
-                // Используем минимальное расстояние, но приоритет отдаем расстоянию до концов
-                double effectiveDist = Math.Min(minDist, distToLine);
-
-                // Проверяем, что стены не параллельны (должны образовывать угол)
-                XYZ otherDir = (otherEnd - otherStart).Normalize();
-                double dotProduct = sourceDir.DotProduct(otherDir);
-                double absDotProduct = Math.Abs(dotProduct);
-                bool isParallel = absDotProduct > 0.95; // Почти параллельны (cos < 5°)
-
-                // УЖЕСТОЧЕННАЯ ПРОВЕРКА: стены должны быть очень близко (в пределах tolerance)
-                // И не параллельны, и образовывать разумный угол
-                if (effectiveDist < tolerance && effectiveDist < minDistance && !isParallel)
-                {
-                    // Дополнительная проверка: стены должны образовывать угол
-                    // Вычисляем угол между направлениями
-                    dotProduct = Math.Min(1.0, Math.Max(-1.0, dotProduct));
-                    double angle = Math.Acos(dotProduct);
-                    double angleDegrees = angle * 180.0 / Math.PI;
-
-                    // Принимаем стены, которые образуют угол от 15° до 165° (ужесточено с 5°-175°)
-                    // Это исключает почти параллельные и почти противоположные стены
-                    if (angleDegrees > 15.0 && angleDegrees < 165.0)
-                    {
-                        // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: конец другой стены должен быть очень близко к концу исходной
-                        // Это гарантирует, что стены действительно примыкают, а не просто близко расположены
-                        if (minDist < tolerance)
-                        {
-                            minDistance = effectiveDist;
-                            closestWall = other;
-                            if (doc != null)
-                            {
-                                Log(doc, $"FindAdjacentWallAtEnd: найдена через геометрический поиск: стена {other.Id}, расстояние до концов {minDist:F3}, до линии {distToLine:F3}, угол {angleDegrees:F1}°");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (closestWall == null && doc != null)
-        {
-            Log(doc, $"FindAdjacentWallAtEnd: примыкающая стена не найдена для стены {sourceWall.Id}, конец {endIndex}");
         }
 
         return closestWall;
     }
-    catch (Exception ex)
+    catch
     {
-        if (doc != null)
-        {
-            Log(doc, $"FindAdjacentWallAtEnd ОШИБКА: {ex.Message}");
-        }
         return null;
     }
 }
@@ -1866,28 +1760,15 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         
         // Ограничиваем максимальное продление разумным значением
         // При очень малых углах tan(angle/2) стремится к 0, что дает огромное продление
-        // Используем более консервативное ограничение: максимум 1 метр продления
-        const double maxReasonableExtension = 1.0; // 1 метр - максимальное разумное продление
-        double finalExtension = Math.Min(extension, maxReasonableExtension);
-        
-        // Дополнительная проверка: если продление получилось слишком большим относительно толщины стен,
-        // возможно, угол определен неправильно - используем просто halfThickness
-        double thicknessRatio = finalExtension / (sourceHalfThickness + adjacentHalfThickness);
-        if (thicknessRatio > 20.0) // Если продление больше 20x от толщины - что-то не так
-        {
-            if (doc != null)
-            {
-                Log(doc, $"  ⚠️ Продление слишком большое (ratio={thicknessRatio:F1}), используем halfThickness вместо {finalExtension:F3}");
-            }
-            return sourceHalfThickness;
-        }
+        double maxExtension = (sourceHalfThickness + adjacentHalfThickness) * 50.0; // разумный предел для очень острых углов
+        double finalExtension = Math.Min(extension, maxExtension);
         
         // Логируем результат
         if (doc != null)
         {
             Log(doc, $"  Толщины: source={sourceHalfThickness * 2:F3}, adjacent={adjacentHalfThickness * 2:F3}");
             Log(doc, $"  halfAngle={halfAngle * 180.0 / Math.PI:F1}°, tanHalf={tanHalf:F3}");
-            Log(doc, $"  Продление: {extension:F3}, ограничено до: {finalExtension:F3}, ratio={thicknessRatio:F1}");
+            Log(doc, $"  Продление: {extension:F3}, ограничено до: {finalExtension:F3}");
         }
         
         return finalExtension;
