@@ -3591,7 +3591,13 @@ private static Curve ExtendCurveToJoinedWalls(
                                 // Проецируем абсолютную позицию окна на кривую внешней стены
                                 // Это даст точку на оси внешней стены, ближайшую к реальной позиции окна
                                 double param = candidateCurve.Project(openingAbsolutePosition).Parameter;
-                                XYZ candidatePoint = candidateCurve.Evaluate(param, true);
+                                XYZ candidatePointOnCurve = candidateCurve.Evaluate(param, true);
+                                
+                                // Сохраняем Z-координату (высоту) из исходного окна
+                                XYZ candidatePoint = new XYZ(
+                                    candidatePointOnCurve.X,
+                                    candidatePointOnCurve.Y,
+                                    openingAbsolutePosition.Z);
                                 
                                 // Вычисляем расстояние от реальной позиции окна до оси внешней стены
                                 double distance = openingAbsolutePosition.DistanceTo(candidatePoint);
@@ -3610,7 +3616,12 @@ private static Curve ExtendCurveToJoinedWalls(
                                 for (int i = 0; i <= 100; i++)
                                 {
                                     double t = i / 100.0;
-                                    XYZ testPoint = candidateCurve.Evaluate(t, true);
+                                    XYZ testPointOnCurve = candidateCurve.Evaluate(t, true);
+                                    // Сохраняем Z-координату из исходного окна
+                                    XYZ testPoint = new XYZ(
+                                        testPointOnCurve.X,
+                                        testPointOnCurve.Y,
+                                        openingAbsolutePosition.Z);
                                     double distance = openingAbsolutePosition.DistanceTo(testPoint);
                                     if (distance < minDistance)
                                     {
@@ -3645,8 +3656,25 @@ private static Curve ExtendCurveToJoinedWalls(
 
                                 if (newOpening != null)
                                 {
-                                    // Не копируем параметры - просто устанавливаем то же семейство и типоразмер
-                                    // Остальные параметры остаются по умолчанию для нового экземпляра
+                                    // Копируем параметр высоты подоконника из исходного окна
+                                    // чтобы сохранить ту же высоту размещения
+                                    Parameter sourceSillHeight = opening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                                    if (sourceSillHeight != null && sourceSillHeight.HasValue)
+                                    {
+                                        Parameter targetSillHeight = newOpening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                                        if (targetSillHeight != null && !targetSillHeight.IsReadOnly)
+                                        {
+                                            try
+                                            {
+                                                targetSillHeight.Set(sourceSillHeight.AsDouble());
+                                                Log(doc, $"Скопирована высота подоконника: {sourceSillHeight.AsDouble():F3}");
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                Log(doc, $"Не удалось скопировать высоту подоконника: {ex.Message}");
+                                            }
+                                        }
+                                    }
 
                                     // Устанавливаем параметр ADSK_Зона для окна/двери
                                     SetZoneParameter(doc, newOpening, bestExternalWall);
