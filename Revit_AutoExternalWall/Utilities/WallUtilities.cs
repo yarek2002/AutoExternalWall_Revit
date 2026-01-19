@@ -49,11 +49,28 @@ namespace Revit_AutoExternalWall.Utilities
 
                       /// <summary>
         /// Get a suitable external wall type from the document (Basic Wall only, not Curtain Wall or Stacked Wall)
+        /// First checks settings for a saved wall type, then falls back to automatic selection
         /// </summary>
         public static WallType GetExternalWallType(Document doc)
         {
             try
             {
+                // Сначала проверяем настройки на наличие сохраненного типа стены
+                Settings settings = Settings.Load();
+                if (!string.IsNullOrEmpty(settings.SelectedWallTypeId))
+                {
+                    if (int.TryParse(settings.SelectedWallTypeId, out int wallTypeIdInt))
+                    {
+                        ElementId wallTypeId = new ElementId(wallTypeIdInt);
+                        WallType savedWallType = doc.GetElement(wallTypeId) as WallType;
+                        if (savedWallType != null && savedWallType.Kind == WallKind.Basic)
+                        {
+                            return savedWallType;
+                        }
+                    }
+                }
+
+                // Если сохраненного типа нет или он не найден, используем автоматический поиск
                 // Try to find a wall type with "exterior" or "external" in the name, excluding Curtain Walls and Stacked Walls
                 FilteredElementCollector collector = new FilteredElementCollector(doc)
                     .OfClass(typeof(WallType));

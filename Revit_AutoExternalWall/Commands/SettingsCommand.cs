@@ -1,4 +1,5 @@
 using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using System;
 using System.Windows;
@@ -20,7 +21,8 @@ namespace Revit_AutoExternalWall
                 Settings settings = Settings.Load();
 
                 // Создаем и показываем окно настроек
-                SettingsWindow settingsWindow = new SettingsWindow(settings);
+                Document doc = commandData.Application.ActiveUIDocument.Document;
+                SettingsWindow settingsWindow = new SettingsWindow(settings, doc);
                 settingsWindow.ShowDialog();
 
                 return Result.Succeeded;

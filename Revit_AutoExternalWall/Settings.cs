@@ -20,6 +20,11 @@ namespace Revit_AutoExternalWall
         /// </summary>
         public bool CopyOpeningsToExternalWalls { get; set; } = false;
 
+        /// <summary>
+        /// ID выбранного типа стены для внешних стен (хранится как строка для сериализации)
+        /// </summary>
+        public string SelectedWallTypeId { get; set; } = null;
+
         private static string GetSettingsPath()
         {
             string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
