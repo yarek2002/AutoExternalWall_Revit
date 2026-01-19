@@ -1716,25 +1716,28 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         }
 
         // Вычисляем продление с учетом угла и толщины стен
+        double sourceHalfThickness = GetWallThickness(sourceWall) / 2.0;
         double adjacentHalfThickness = GetWallThickness(adjacentWall) / 2.0;
         
         // Продление оси исходной стены до внешней грани примыкающей стены
-        // Внешняя грань - это параллельное смещение оси на adjacentHalfThickness
-        // Правильная формула: extension = offset / sin(angle)
-        double sinAngle = Math.Sin(angle);
+        // Продление идёт по биссектрисе угла, поэтому используем tan(angle/2)
+        // Правильная формула: extension = offset / tan(angle/2)
+        double halfAngle = angle / 2.0;
+        double tanHalf = Math.Tan(halfAngle);
         
-        if (sinAngle < 1e-6)
+        if (tanHalf < 1e-6)
         {
             // Угол слишком мал или близок к 0/180 - стены почти параллельны
-            return GetWallThickness(sourceWall) / 2.0;
+            return sourceHalfThickness;
         }
 
-        // Продление = половина толщины примыкающей стены / sin(угла между осями)
-        double extension = adjacentHalfThickness / sinAngle;
+        // Продление = (половина толщины исходной + половина толщины примыкающей) / tan(угол/2)
+        // Это более корректная формула, учитывающая обе толщины
+        double extension = (sourceHalfThickness + adjacentHalfThickness) / tanHalf;
         
         // Ограничиваем максимальное продление разумным значением
-        // При очень малых углах sin(angle) стремится к 0, что дает огромное продление
-        double maxExtension = adjacentHalfThickness * 50.0; // разумный предел для очень острых углов
+        // При очень малых углах tan(angle/2) стремится к 0, что дает огромное продление
+        double maxExtension = (sourceHalfThickness + adjacentHalfThickness) * 50.0; // разумный предел для очень острых углов
         return Math.Min(extension, maxExtension);
     }
     catch
