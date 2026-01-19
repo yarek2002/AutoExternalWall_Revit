@@ -1601,15 +1601,24 @@ private static double CalculateExtensionLengthGeometric(Wall sourceWall, Wall ad
         double distToEnd = sourceEndPoint.DistanceTo(adjacentEnd);
         if (distToStart > distToEnd) adjacentDir = -adjacentDir;
 
-        // Вычисляем угол между стенами БЕЗ потери информации о направлении
-        // Math.Abs убивает информацию о внутренней/внешней стороне и выпуклости/вогнутости угла
+        // Вычисляем угол между направлениями осей стен
         double dotProduct = sourceDir.DotProduct(adjacentDir);
         double angle = Math.Acos(Math.Min(1.0, Math.Max(-1.0, dotProduct)));
         
-        // Определяем направление угла через CrossProduct (для выпуклых/вогнутых углов)
-        // CrossProduct.Z покажет направление поворота
+        // ⚠️ КРИТИЧЕСКИ ВАЖНО: определяем тип угла (выпуклый/вогнутый)
+        // CrossProduct.Z показывает направление поворота в плоскости XY
+        // В Revit всё происходит в плоскости XY, поэтому используем Z компоненту
         XYZ crossProduct = sourceDir.CrossProduct(adjacentDir);
-        // Знак Z компоненты показывает направление поворота в плоскости XY
+        
+        // Если угол вогнутый (crossProduct.Z < 0), используем дополнение до π
+        // Для вогнутого угла реальный угол излома контура = π - angle
+        // Для выпуклого угла реальный угол излома контура = angle
+        bool isConcave = crossProduct.Z < 0;
+        if (isConcave)
+        {
+            // Вогнутый угол - используем дополнение до 180°
+            angle = Math.PI - angle;
+        }
         
         // Если угол очень мал (стены почти параллельны) или очень большой (почти противоположны)
         if (angle < 0.1 || angle > Math.PI - 0.1)
