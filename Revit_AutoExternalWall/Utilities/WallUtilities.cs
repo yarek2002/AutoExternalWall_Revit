@@ -571,9 +571,8 @@ namespace Revit_AutoExternalWall.Utilities
 
         /// <summary>
         /// Calculate outward normal for a room boundary segment relative to a wall.
-        /// Использует середину граничной кривой помещения для определения направления.
-        /// Если помещение лежит по направлению wallNormal, инвертируем нормаль,
-        /// чтобы получить направление наружу от помещения.
+        /// If the room lies on the side of the wall normal, we flip the normal so that
+        /// the returned vector always points "наружу" от помещения.
         /// </summary>
         private static XYZ GetOutwardNormalForRoomBoundary(Wall wall, Curve boundaryCurve)
         {
@@ -588,24 +587,9 @@ namespace Revit_AutoExternalWall.Utilities
 
                 // Берём середину граничной кривой помещения
                 XYZ mid = boundaryCurve.Evaluate(0.5, true);
-                
-                // Находим ближайшую точку на оси стены
-                IntersectionResult proj = wallLine.Project(mid);
-                XYZ projPoint = null;
-                if (proj != null)
-                {
-                    double param = proj.Parameter;
-                    projPoint = wallLine.Evaluate(param, false);
-                }
-                
-                if (projPoint == null)
-                {
-                    // Если проекция не удалась, используем середину стены
-                    projPoint = wallLine.Evaluate(0.5, true);
-                }
-                
-                // Вектор от стены к граничной кривой помещения
-                XYZ toRoom = (mid - projPoint).Normalize();
+                // Находим ближайшую точку оси стены
+                XYZ proj = wallLine.Project(mid)?.XYZPoint ?? wallLine.Evaluate(0.5, true);
+                XYZ toRoom = mid - proj;
 
                 // Если помещение лежит по направлению wallNormal, то наружу — в обратную сторону
                 if (toRoom.DotProduct(wallNormal) > 0)
@@ -675,15 +659,13 @@ namespace Revit_AutoExternalWall.Utilities
         }
 
         /// <summary>
-        /// Определяет направление наружу от помещения.
-        /// Для П-образных комнат всегда использует граничную кривую вместо центра помещения,
-        /// так как центр может находиться в неправильной части относительно конкретной стены.
+        /// Определяет направление наружу от помещения, используя центр помещения.
         /// Возвращает нормаль, направленную от помещения наружу.
         /// </summary>
         private static XYZ GetOutwardNormalFromRoom(Wall wall, Curve boundaryCurve, Room room)
         {
             XYZ wallNormal = GetWallFaceNormal(wall);
-            if (wall == null || room == null)
+            if (wall == null || boundaryCurve == null || room == null)
                 return wallNormal;
 
             try
@@ -691,32 +673,18 @@ namespace Revit_AutoExternalWall.Utilities
                 if (!(wall.Location is LocationCurve lc) || !(lc.Curve is Line wallLine))
                     return wallNormal;
 
-                // ВАЖНО: Для П-образных комнат центр помещения может быть в неправильной части
-                // Поэтому всегда предпочитаем использовать граничную кривую, если она доступна
-                if (boundaryCurve != null)
-                {
-                    return GetOutwardNormalForRoomBoundary(wall, boundaryCurve);
-                }
-
-                // Если граничной кривой нет, используем центр помещения как fallback
+                // Получаем центр помещения
                 LocationPoint roomLocation = room.Location as LocationPoint;
                 if (roomLocation == null)
                 {
-                    // Если нет ни граничной кривой, ни LocationPoint, возвращаем базовую нормаль
-                    return wallNormal;
+                    // Если нет LocationPoint, используем граничную кривую
+                    return GetOutwardNormalForRoomBoundary(wall, boundaryCurve);
                 }
 
                 XYZ roomCenter = roomLocation.Point;
                 
                 // Находим ближайшую точку на оси стены к центру помещения
-                IntersectionResult proj = wallLine.Project(roomCenter);
-                XYZ closestPointOnWall = null;
-                if (proj != null)
-                {
-                    double param = proj.Parameter;
-                    closestPointOnWall = wallLine.Evaluate(param, false);
-                }
-                
+                XYZ closestPointOnWall = wallLine.Project(roomCenter)?.XYZPoint;
                 if (closestPointOnWall == null)
                 {
                     // Если проекция не удалась, используем середину стены
@@ -737,12 +705,8 @@ namespace Revit_AutoExternalWall.Utilities
             }
             catch
             {
-                // В случае ошибки используем базовую функцию с граничной кривой, если она есть
-                if (boundaryCurve != null)
-                {
-                    return GetOutwardNormalForRoomBoundary(wall, boundaryCurve);
-                }
-                return wallNormal;
+                // В случае ошибки используем базовую функцию
+                return GetOutwardNormalForRoomBoundary(wall, boundaryCurve);
             }
         }
 
@@ -3721,7 +3685,11 @@ private static Curve ExtendCurveToJoinedWalls(
                                     CopyWindowDimensions(doc, opening, newOpening);
 
                                     // Устанавливаем параметр ADSK_Зона для окна/двери
-                                    SetZoneParameter(doc, newOpening, bestExternalWall);
+                                    // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
+                                    // Для окон используем bestExternalWall, но передаем room для правильного определения направления
+                                    LocationCurve hostWallLocation = hostWall.Location as LocationCurve;
+                                    Curve boundaryCurveForWindow = hostWallLocation?.Curve;
+                                    SetZoneParameter(doc, newOpening, bestExternalWall, room, boundaryCurveForWindow);
 
                                     copiedCount++;
                                     Log(doc, $"Установлено окно/дверь {familySymbol.Name} во внешнюю стену {bestExternalWall.Id} (новый ID: {newOpening.Id}, расстояние до исходной позиции: {minDistance:F3})");
@@ -3992,7 +3960,7 @@ private static Curve ExtendCurveToJoinedWalls(
         /// <summary>
         /// Определяет сторону света (Ю, С, В, З) по направлению нормали внешней стены
         /// </summary>
-        private static string GetCardinalDirection(Wall wall)
+        private static string GetCardinalDirection(Wall wall, Room room = null, Curve boundaryCurve = null)
         {
             try
             {
@@ -4000,47 +3968,73 @@ private static Curve ExtendCurveToJoinedWalls(
                     return "С";
 
                 // Получаем нормаль к внешней стороне стены
-                // Используем среднюю точку стены для более точного определения направления
-                LocationCurve locationCurve = wall.Location as LocationCurve;
-                if (locationCurve == null || locationCurve.Curve == null)
-                    return "С";
-
-                Curve curve = locationCurve.Curve;
-                XYZ midPoint = curve.Evaluate(0.5, true);
-
-                // Получаем внешнюю грань стены для более точного определения нормали
+                // Если есть информация о помещении, используем её для правильного определения направления
+                // Это особенно важно для П-образных комнат
                 XYZ normal = null;
-                try
+                
+                if (room != null)
                 {
-                    var sideRefs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
-                    if (sideRefs != null && sideRefs.Count > 0)
+                    // Используем функцию, которая учитывает расположение помещения
+                    // Это особенно важно для П-образных комнат
+                    if (boundaryCurve != null)
                     {
-                        Reference firstRef = sideRefs[0];
-                        Face face = wall.Document.GetElement(firstRef)?.GetGeometryObjectFromReference(firstRef) as Face;
-                        if (face != null)
+                        normal = GetOutwardNormalFromRoom(wall, boundaryCurve, room);
+                    }
+                    else
+                    {
+                        LocationCurve locationCurve = wall.Location as LocationCurve;
+                        if (locationCurve != null && locationCurve.Curve != null)
                         {
-                            // Получаем нормаль в средней точке грани
-                            UV uv = face.Project(midPoint).UVPoint;
-                            normal = face.ComputeNormal(uv);
-                            // Проецируем на горизонтальную плоскость (XY)
-                            normal = new XYZ(normal.X, normal.Y, 0).Normalize();
-                            // Инвертируем нормаль, так как ComputeNormal может указывать внутрь
-                            // Нам нужно направление наружу от здания
-                            normal = -normal;
+                            normal = GetOutwardNormalFromRoom(wall, locationCurve.Curve, room);
                         }
                     }
                 }
-                catch
-                {
-                    // Если не удалось получить грань, используем метод GetWallFaceNormal
-                }
-
-                // Если не удалось получить нормаль из грани, используем упрощенный метод
+                
+                // Если не удалось определить нормаль через помещение, используем стандартный метод
                 if (normal == null || normal.GetLength() < 0.1)
                 {
-                    normal = GetWallFaceNormal(wall);
-                    // Инвертируем нормаль, так как GetWallFaceNormal может указывать в неправильном направлении
-                    normal = -normal;
+                    // Получаем нормаль к внешней стороне стены
+                    // Используем среднюю точку стены для более точного определения направления
+                    LocationCurve locationCurve = wall.Location as LocationCurve;
+                    if (locationCurve == null || locationCurve.Curve == null)
+                        return "С";
+
+                    Curve curve = locationCurve.Curve;
+                    XYZ midPoint = curve.Evaluate(0.5, true);
+
+                    // Получаем внешнюю грань стены для более точного определения нормали
+                    try
+                    {
+                        var sideRefs = HostObjectUtils.GetSideFaces(wall, ShellLayerType.Exterior);
+                        if (sideRefs != null && sideRefs.Count > 0)
+                        {
+                            Reference firstRef = sideRefs[0];
+                            Face face = wall.Document.GetElement(firstRef)?.GetGeometryObjectFromReference(firstRef) as Face;
+                            if (face != null)
+                            {
+                                // Получаем нормаль в средней точке грани
+                                UV uv = face.Project(midPoint).UVPoint;
+                                normal = face.ComputeNormal(uv);
+                                // Проецируем на горизонтальную плоскость (XY)
+                                normal = new XYZ(normal.X, normal.Y, 0).Normalize();
+                                // Инвертируем нормаль, так как ComputeNormal может указывать внутрь
+                                // Нам нужно направление наружу от здания
+                                normal = -normal;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Если не удалось получить грань, используем метод GetWallFaceNormal
+                    }
+
+                    // Если не удалось получить нормаль из грани, используем упрощенный метод
+                    if (normal == null || normal.GetLength() < 0.1)
+                    {
+                        normal = GetWallFaceNormal(wall);
+                        // Инвертируем нормаль, так как GetWallFaceNormal может указывать в неправильном направлении
+                        normal = -normal;
+                    }
                 }
 
                 // Вычисляем азимут (угол от севера)
@@ -4076,7 +4070,7 @@ private static Curve ExtendCurveToJoinedWalls(
         /// <summary>
         /// Устанавливает параметр ADSK_Зона для стены, окна или двери
         /// </summary>
-        private static void SetZoneParameter(Document doc, Element element, Wall hostWall)
+        private static void SetZoneParameter(Document doc, Element element, Wall hostWall, Room room = null, Curve boundaryCurve = null)
         {
             try
             {
@@ -4089,7 +4083,8 @@ private static Curve ExtendCurveToJoinedWalls(
                 if (wallToUse == null)
                     return;
 
-                string direction = GetCardinalDirection(wallToUse);
+                // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
+                string direction = GetCardinalDirection(wallToUse, room, boundaryCurve);
                 
                 // Ищем параметр ADSK_Зона
                 Parameter zoneParam = element.LookupParameter("ADSK_Зона");
@@ -4259,13 +4254,10 @@ private static Curve ExtendCurveToJoinedWalls(
 
                     // Определяем направление наружу от помещения
                     // Используем граничную кривую для определения направления
-                    // ВАЖНО: для П-образных комнат граничная кривая более точна, чем центр помещения
                     Curve boundaryCurve = null;
                     wallBoundaryCurves.TryGetValue(innerWall.Id, out boundaryCurve);
 
-                    // Передаем boundaryCurve только если он действительно является граничной кривой помещения
-                    // Если boundaryCurve == null, функция использует центр помещения как fallback
-                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve, room);
+                    XYZ outwardNormal = GetOutwardNormalFromRoom(innerWall, boundaryCurve ?? axisLine, room);
 
                     // Строим ось внешней стены: ось внутренней + смещение по нормали
                     XYZ axisStart = axisLine.GetEndPoint(0);
@@ -4345,7 +4337,8 @@ private static Curve ExtendCurveToJoinedWalls(
                         CopyWallProperties(innerWall, externalWall);
                         
                         // Устанавливаем параметр ADSK_Зона для внешней стены
-                        SetZoneParameter(doc, externalWall, null);
+                        // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
+                        SetZoneParameter(doc, externalWall, null, room, boundaryCurve);
                         
                         created++;
                         // Добавляем ID созданной стены в список для исключения из проверки
