@@ -2826,6 +2826,9 @@ private static Curve ExtendCurveToJoinedWalls(
                             // Устанавливаем параметр ADSK_Зона для внешней стены
                             SetZoneParameter(doc, externalWall, null);
                             
+                            // Устанавливаем параметр ADSK_Номер квартиры из помещения
+                            SetApartmentNumberParameter(doc, externalWall, segment.Room);
+                            
                             created++;
                             // Добавляем ID созданной стены в список для исключения из проверки
                             createdWallIds.Add(externalWall.Id);
@@ -4333,6 +4336,103 @@ private static Curve ExtendCurveToJoinedWalls(
         }
 
         /// <summary>
+        /// Устанавливает параметр "ADSK_Номер квартиры" для элемента из параметра "Номер" помещения
+        /// </summary>
+        private static void SetApartmentNumberParameter(Document doc, Element element, Room room)
+        {
+            try
+            {
+                if (element == null || room == null)
+                    return;
+
+                // Получаем параметр "Номер" из помещения
+                Parameter roomNumberParam = room.get_Parameter(BuiltInParameter.ROOM_NUMBER);
+                if (roomNumberParam == null || !roomNumberParam.HasValue)
+                {
+                    // Пробуем найти параметр по имени
+                    roomNumberParam = room.LookupParameter("Номер");
+                    if (roomNumberParam == null || !roomNumberParam.HasValue)
+                    {
+                        Log(doc, $"Параметр 'Номер' не найден или пуст для помещения {room.Id}");
+                        return;
+                    }
+                }
+
+                string roomNumber = null;
+                if (roomNumberParam.StorageType == StorageType.String)
+                {
+                    roomNumber = roomNumberParam.AsString();
+                }
+                else if (roomNumberParam.StorageType == StorageType.Integer)
+                {
+                    roomNumber = roomNumberParam.AsInteger().ToString();
+                }
+                else if (roomNumberParam.StorageType == StorageType.Double)
+                {
+                    roomNumber = roomNumberParam.AsDouble().ToString();
+                }
+
+                if (string.IsNullOrEmpty(roomNumber))
+                {
+                    Log(doc, $"Параметр 'Номер' помещения {room.Id} пуст");
+                    return;
+                }
+
+                // Ищем параметр "ADSK_Номер квартиры" в элементе
+                Parameter apartmentNumberParam = element.LookupParameter("ADSK_Номер квартиры");
+                if (apartmentNumberParam == null)
+                {
+                    // Пробуем альтернативные варианты названия
+                    foreach (Parameter param in element.Parameters)
+                    {
+                        if (param.Definition != null && 
+                            (param.Definition.Name == "ADSK_Номер квартиры" ||
+                             param.Definition.Name.Contains("Номер квартиры") || 
+                             param.Definition.Name.Contains("Apartment Number") ||
+                             param.Definition.Name.Contains("ADSK_Номер")))
+                        {
+                            apartmentNumberParam = param;
+                            break;
+                        }
+                    }
+                }
+
+                if (apartmentNumberParam != null && !apartmentNumberParam.IsReadOnly)
+                {
+                    if (apartmentNumberParam.StorageType == StorageType.String)
+                    {
+                        apartmentNumberParam.Set(roomNumber);
+                        Log(doc, $"Установлен параметр ADSK_Номер квартиры = '{roomNumber}' для элемента {element.Id} из помещения {room.Id}");
+                    }
+                    else if (apartmentNumberParam.StorageType == StorageType.Integer)
+                    {
+                        if (int.TryParse(roomNumber, out int number))
+                        {
+                            apartmentNumberParam.Set(number);
+                            Log(doc, $"Установлен параметр ADSK_Номер квартиры = {number} для элемента {element.Id} из помещения {room.Id}");
+                        }
+                        else
+                        {
+                            Log(doc, $"Не удалось преобразовать номер помещения '{roomNumber}' в число для элемента {element.Id}");
+                        }
+                    }
+                    else
+                    {
+                        Log(doc, $"Параметр ADSK_Номер квартиры найден, но имеет неподдерживаемый тип хранения {apartmentNumberParam.StorageType} для элемента {element.Id}");
+                    }
+                }
+                else
+                {
+                    Log(doc, $"Параметр ADSK_Номер квартиры не найден или только для чтения для элемента {element.Id}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(doc, $"Ошибка при установке параметра ADSK_Номер квартиры: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Новая простая логика создания внешних стен для одного помещения.
         /// Создает внешние стены, повторяющие границы стен помещения.
         /// </summary>
@@ -4545,6 +4645,9 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Устанавливаем параметр ADSK_Зона для внешней стены
                         // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
                         SetZoneParameter(doc, externalWall, null, room, boundaryCurve);
+                        
+                        // Устанавливаем параметр ADSK_Номер квартиры из помещения
+                        SetApartmentNumberParameter(doc, externalWall, room);
                         
                         created++;
                         // Добавляем ID созданной стены в список для исключения из проверки
