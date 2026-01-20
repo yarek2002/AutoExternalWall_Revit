@@ -3899,6 +3899,9 @@ private static Curve ExtendCurveToJoinedWalls(
                                     Curve boundaryCurveForWindow = hostWallLocation?.Curve;
                                     SetZoneParameter(doc, newOpening, bestExternalWall, room, boundaryCurveForWindow);
 
+                                    // Устанавливаем параметр ADSK_Номер квартиры из помещения
+                                    SetApartmentNumberParameter(doc, newOpening, room);
+
                                     copiedCount++;
                                     Log(doc, $"Установлено окно/дверь {familySymbol.Name} во внешнюю стену {bestExternalWall.Id} (новый ID: {newOpening.Id}, расстояние до исходной позиции: {minDistance:F3})");
                                     
