@@ -25,6 +25,16 @@ namespace Revit_AutoExternalWall
         /// </summary>
         public string SelectedWallTypeId { get; set; } = null;
 
+        /// <summary>
+        /// Включено ли установка параметра ADSK_Номер квартиры
+        /// </summary>
+        public bool SetApartmentNumber { get; set; } = true;
+
+        /// <summary>
+        /// Включено ли установка параметра ADSK_Зона
+        /// </summary>
+        public bool SetZone { get; set; } = true;
+
         private static string GetSettingsPath()
         {
             string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);

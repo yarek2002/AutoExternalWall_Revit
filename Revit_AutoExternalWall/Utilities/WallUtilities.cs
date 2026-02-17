@@ -165,7 +165,11 @@ namespace Revit_AutoExternalWall.Utilities
                         CopyWallProperties(innerWall, externalWall);
                         
                         // Устанавливаем параметр ADSK_Зона для внешней стены
-                        SetZoneParameter(doc, externalWall, null);
+                        Settings settings = Settings.Load();
+                        if (settings.SetZone)
+                        {
+                            SetZoneParameter(doc, externalWall, null);
+                        }
                         
                         wallsCreated++;
                     }
@@ -1170,7 +1174,11 @@ namespace Revit_AutoExternalWall.Utilities
                         CopyWallProperties(innerWall, externalWall);
                         
                         // Устанавливаем параметр ADSK_Зона для внешней стены
-                        SetZoneParameter(doc, externalWall, null);
+                        Settings settings = Settings.Load();
+                        if (settings.SetZone)
+                        {
+                            SetZoneParameter(doc, externalWall, null);
+                        }
                         
                         createdExternalCurves.Add(trimmed);
                         created++;
@@ -1365,7 +1373,11 @@ namespace Revit_AutoExternalWall.Utilities
                     CopyWallProperties(innerWall, externalWall);
                     
                     // Устанавливаем параметр ADSK_Зона для внешней стены
-                    SetZoneParameter(doc, externalWall, null);
+                    Settings settings = Settings.Load();
+                    if (settings.SetZone)
+                    {
+                        SetZoneParameter(doc, externalWall, null);
+                    }
                     
                     existingExternalCurves?.Add(trimmed);
                 }
@@ -1419,7 +1431,11 @@ namespace Revit_AutoExternalWall.Utilities
                     CopyWallProperties(innerWall, externalWall);
                     
                     // Устанавливаем параметр ADSK_Зона для внешней стены
-                    SetZoneParameter(doc, externalWall, null);
+                    Settings settings = Settings.Load();
+                    if (settings.SetZone)
+                    {
+                        SetZoneParameter(doc, externalWall, null);
+                    }
                 }
 
                 return externalWall;
@@ -2823,11 +2839,17 @@ private static Curve ExtendCurveToJoinedWalls(
                             DisableWallJoins(externalWall);
                             CopyWallProperties(innerWall, externalWall);
                             
-                            // Устанавливаем параметр ADSK_Зона для внешней стены
-                            SetZoneParameter(doc, externalWall, null);
+                            // Устанавливаем параметры ADSK_Зона и ADSK_Номер квартиры для внешней стены
+                            Settings settings = Settings.Load();
+                            if (settings.SetZone)
+                            {
+                                SetZoneParameter(doc, externalWall, null);
+                            }
                             
-                            // Устанавливаем параметр ADSK_Номер квартиры из помещения
-                            SetApartmentNumberParameter(doc, externalWall, segment.Room);
+                            if (settings.SetApartmentNumber)
+                            {
+                                SetApartmentNumberParameter(doc, externalWall, segment.Room);
+                            }
                             
                             created++;
                             // Добавляем ID созданной стены в список для исключения из проверки
@@ -3892,15 +3914,22 @@ private static Curve ExtendCurveToJoinedWalls(
                                     // Копируем параметры ширины и высоты окна из исходного окна
                                     CopyWindowDimensions(doc, opening, newOpening);
 
-                                    // Устанавливаем параметр ADSK_Зона для окна/двери
-                                    // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
-                                    // Для окон используем bestExternalWall, но передаем room для правильного определения направления
-                                    LocationCurve hostWallLocation = hostWall.Location as LocationCurve;
-                                    Curve boundaryCurveForWindow = hostWallLocation?.Curve;
-                                    SetZoneParameter(doc, newOpening, bestExternalWall, room, boundaryCurveForWindow);
+                                    // Устанавливаем параметры ADSK_Зона и ADSK_Номер квартиры для окна/двери
+                                    Settings settings = Settings.Load();
+                                    if (settings.SetZone)
+                                    {
+                                        // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
+                                        // Для окон используем bestExternalWall, но передаем room для правильного определения направления
+                                        LocationCurve hostWallLocation = hostWall.Location as LocationCurve;
+                                        Curve boundaryCurveForWindow = hostWallLocation?.Curve;
+                                        SetZoneParameter(doc, newOpening, bestExternalWall, room, boundaryCurveForWindow);
+                                    }
 
-                                    // Устанавливаем параметр ADSK_Номер квартиры из помещения
-                                    SetApartmentNumberParameter(doc, newOpening, room);
+                                    if (settings.SetApartmentNumber)
+                                    {
+                                        // Устанавливаем параметр ADSK_Номер квартиры из помещения
+                                        SetApartmentNumberParameter(doc, newOpening, room);
+                                    }
 
                                     copiedCount++;
                                     Log(doc, $"Установлено окно/дверь {familySymbol.Name} во внешнюю стену {bestExternalWall.Id} (новый ID: {newOpening.Id}, расстояние до исходной позиции: {minDistance:F3})");
@@ -4645,12 +4674,19 @@ private static Curve ExtendCurveToJoinedWalls(
                         // Копируем свойства из внутренней стены
                         CopyWallProperties(innerWall, externalWall);
                         
-                        // Устанавливаем параметр ADSK_Зона для внешней стены
-                        // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
-                        SetZoneParameter(doc, externalWall, null, room, boundaryCurve);
+                        // Устанавливаем параметры ADSK_Зона и ADSK_Номер квартиры для внешней стены
+                        Settings settings = Settings.Load();
+                        if (settings.SetZone)
+                        {
+                            // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
+                            SetZoneParameter(doc, externalWall, null, room, boundaryCurve);
+                        }
                         
-                        // Устанавливаем параметр ADSK_Номер квартиры из помещения
-                        SetApartmentNumberParameter(doc, externalWall, room);
+                        if (settings.SetApartmentNumber)
+                        {
+                            // Устанавливаем параметр ADSK_Номер квартиры из помещения
+                            SetApartmentNumberParameter(doc, externalWall, room);
+                        }
                         
                         created++;
                         // Добавляем ID созданной стены в список для исключения из проверки

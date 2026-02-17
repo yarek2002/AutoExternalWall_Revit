@@ -35,6 +35,26 @@
                        Foreground="Gray"
                        FontSize="11"/>
             
+            <CheckBox x:Name="chkSetApartmentNumber" 
+                      Content="Устанавливать параметр ADSK_Номер квартиры"
+                      IsChecked="True"
+                      Margin="0,15,0,5"/>
+            <TextBlock Text="Когда включено, параметр ADSK_Номер квартиры будет устанавливаться из параметра 'Номер' помещения."
+                       TextWrapping="Wrap"
+                       Margin="20,5,0,0"
+                       Foreground="Gray"
+                       FontSize="11"/>
+            
+            <CheckBox x:Name="chkSetZone" 
+                      Content="Устанавливать параметр ADSK_Зона"
+                      IsChecked="True"
+                      Margin="0,15,0,5"/>
+            <TextBlock Text="Когда включено, параметр ADSK_Зона будет устанавливаться на основе стороны света стены."
+                       TextWrapping="Wrap"
+                       Margin="20,5,0,0"
+                       Foreground="Gray"
+                       FontSize="11"/>
+            
             <TextBlock Text="Тип стены для внешних стен:"
                        Margin="0,20,0,5"
                        FontWeight="SemiBold"/>

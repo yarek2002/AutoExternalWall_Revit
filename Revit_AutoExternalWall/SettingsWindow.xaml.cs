@@ -19,6 +19,8 @@ namespace Revit_AutoExternalWall
             Document = doc;
             chkCreateOpenings.IsChecked = settings.CreateOpenings;
             chkCopyOpenings.IsChecked = settings.CopyOpeningsToExternalWalls;
+            chkSetApartmentNumber.IsChecked = settings.SetApartmentNumber;
+            chkSetZone.IsChecked = settings.SetZone;
             
             // Заполняем ComboBox типами стен
             LoadWallTypes();
@@ -68,6 +70,8 @@ namespace Revit_AutoExternalWall
         {
             Settings.CreateOpenings = chkCreateOpenings.IsChecked ?? true;
             Settings.CopyOpeningsToExternalWalls = chkCopyOpenings.IsChecked ?? false;
+            Settings.SetApartmentNumber = chkSetApartmentNumber.IsChecked ?? true;
+            Settings.SetZone = chkSetZone.IsChecked ?? true;
             
             // Сохраняем выбранный тип стены
             if (cmbWallType.SelectedItem is WallType selectedWallType)
