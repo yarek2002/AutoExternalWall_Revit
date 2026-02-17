@@ -2622,6 +2622,9 @@ private static Curve ExtendCurveToJoinedWalls(
 
             try
             {
+                // Загружаем настройки один раз для использования во всей функции
+                Settings settings = Settings.Load();
+                
                 Log(doc, $"Начинаем создание внешних стен для {rooms.Count} помещений");
 
                 // Собираем все стены и их boundary segments от всех помещений
@@ -2840,7 +2843,6 @@ private static Curve ExtendCurveToJoinedWalls(
                             CopyWallProperties(innerWall, externalWall);
                             
                             // Устанавливаем параметры ADSK_Зона и ADSK_Номер квартиры для внешней стены
-                            Settings settings = Settings.Load();
                             if (settings.SetZone)
                             {
                                 SetZoneParameter(doc, externalWall, null);
@@ -2870,7 +2872,6 @@ private static Curve ExtendCurveToJoinedWalls(
 
                 // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
                 // Проверяем настройки: создавать ли проемы
-                Settings settings = Settings.Load();
                 if (settings.CreateOpenings)
                 {
                     int totalJoinsCreated = 0;
@@ -4484,6 +4485,9 @@ private static Curve ExtendCurveToJoinedWalls(
 
             try
             {
+                // Загружаем настройки один раз для использования во всей функции
+                Settings settings = Settings.Load();
+                
                 Log(doc, $"Начинаем создание внешних стен для помещения {room.Id}");
 
                 // Получаем границы помещения
@@ -4675,7 +4679,6 @@ private static Curve ExtendCurveToJoinedWalls(
                         CopyWallProperties(innerWall, externalWall);
                         
                         // Устанавливаем параметры ADSK_Зона и ADSK_Номер квартиры для внешней стены
-                        Settings settings = Settings.Load();
                         if (settings.SetZone)
                         {
                             // Передаем информацию о помещении для правильного определения направления в П-образных комнатах
@@ -4709,7 +4712,6 @@ private static Curve ExtendCurveToJoinedWalls(
 
                 // Соединяем геометрию между внутренними и внешними стенами для автоматического создания проемов
                 // Проверяем настройки: создавать ли проемы
-                Settings settings = Settings.Load();
                 if (settings.CreateOpenings)
                 {
                     int joinsCreated = JoinGeometryBetweenWalls(doc, room, innerWallRoomToExternalWallsMap);
