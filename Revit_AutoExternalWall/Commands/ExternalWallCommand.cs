@@ -30,10 +30,10 @@ namespace Revit_AutoExternalWall
 
                 if (selectedIds.Count == 0)
                 {
-                    TaskDialog taskDialog = new TaskDialog("Select Walls or Rooms")
+                    TaskDialog taskDialog = new TaskDialog("Выбор стен или помещений")
                     {
-                        MainInstruction = "Please select walls and/or rooms",
-                        MainContent = "Select interior walls and/or rooms for which you want to place external walls."
+                        MainInstruction = "Выберите стены и помещения",
+                        MainContent = "Выберите внутренние стены и/или помещения, для которых вы хотите создать внешние стены."
                     };
                     taskDialog.Show();
 
@@ -51,7 +51,7 @@ namespace Revit_AutoExternalWall
 
                 if (selectedIds.Count == 0)
                 {
-                    TaskDialog.Show("No Selection", "No elements selected.");
+                    TaskDialog.Show("Нет выбора", "Элементы не выбраны.");
                     return Autodesk.Revit.UI.Result.Cancelled;
                 }
 
@@ -67,7 +67,7 @@ namespace Revit_AutoExternalWall
 
                 if (selectedWalls.Count == 0 && selectedRooms.Count == 0)
                 {
-                    TaskDialog.Show("Invalid Selection", "Please select at least one wall or one room.");
+                    TaskDialog.Show("Неверный выбор", "Пожалуйста, выберите хотя бы одну стену или одно помещение.");
                     return Autodesk.Revit.UI.Result.Cancelled;
                 }
 
@@ -75,12 +75,12 @@ namespace Revit_AutoExternalWall
                 WallType externalWallType = WallUtilities.GetExternalWallType(doc);
                 if (externalWallType == null)
                 {
-                    TaskDialog.Show("Error", "Could not find suitable wall type for external walls.");
+                    TaskDialog.Show("Ошибка", "Не удалось найти подходящий тип стены для внешних стен.");
                     return Result.Failed;
                 }
 
                 // Start transaction
-                using (Transaction trans = new Transaction(doc, "Place External Walls"))
+                using (Transaction trans = new Transaction(doc, "Создание внешних стен"))
                 {
                     trans.Start();
 
@@ -105,26 +105,26 @@ namespace Revit_AutoExternalWall
                         }
                         catch (Exception ex)
                         {
-                            message += $"Error processing rooms: {ex.Message}\n";
+                            message += $"Ошибка при обработке помещений: {ex.Message}\n";
                         }
                     }
                     else
                     {
-                        TaskDialog.Show("Info", "Пожалуйста, выберите помещение для создания внешних стен.");
+                        TaskDialog.Show("Информация", "Пожалуйста, выберите помещение для создания внешних стен.");
                         return Result.Cancelled;
                     }
 
                     trans.Commit();
 
-                    TaskDialog.Show("Success", $"Created {wallsCreated} external wall(s).");
+                    TaskDialog.Show("Успех", $"Создано {wallsCreated} внешних стен.");
                 }
 
                 return Autodesk.Revit.UI.Result.Succeeded;
             }
             catch (Exception ex)
             {
-                message = $"Error: {ex.Message}\nStack Trace: {ex.StackTrace}";
-                TaskDialog.Show("Error", message);
+                message = $"Ошибка: {ex.Message}\nТрассировка стека: {ex.StackTrace}";
+                TaskDialog.Show("Ошибка", message);
                 return Autodesk.Revit.UI.Result.Failed;
             }
         }

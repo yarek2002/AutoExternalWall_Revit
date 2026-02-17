@@ -24,7 +24,7 @@ namespace Revit_AutoExternalWall
             try
             {
                 // Create ribbon tab
-                string tabName = "External Wall Tools";
+                string tabName = "Создание внешних стен";
                 try
                 {
                     application.CreateRibbonTab(tabName);
@@ -35,7 +35,7 @@ namespace Revit_AutoExternalWall
                 }
 
                 // Create ribbon panel
-                RibbonPanel panel = application.CreateRibbonPanel(tabName, "Tools");
+                RibbonPanel panel = application.CreateRibbonPanel(tabName, "Инструменты");
 
                 // Get the assembly path for button icon
                 string assemblyPath = Assembly.GetExecutingAssembly().Location;
@@ -44,12 +44,12 @@ namespace Revit_AutoExternalWall
                 // Create push button for external wall command
                 PushButtonData externalWallButtonData = new PushButtonData(
                     "cmdExternalWall",
-                    "Place External\nWalls",
+                    "Создать внешние\nстены",
                     assemblyPath,
                     "Revit_AutoExternalWall.ExternalWallCommand");
 
                 PushButton externalWallButton = panel.AddItem(externalWallButtonData) as PushButton;
-                externalWallButton.ToolTip = "Place external walls around selected interior walls";
+                externalWallButton.ToolTip = "Создать внешние стены вокруг выбранных внутренних стен";
 
                 // Set button image if available
                 try
@@ -76,7 +76,7 @@ namespace Revit_AutoExternalWall
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Error", $"OnStartup Error: {ex.Message}");
+                TaskDialog.Show("Ошибка", $"Ошибка при запуске: {ex.Message}");
                 return Result.Failed;
             }
         }
